@@ -15,7 +15,7 @@ export default function Layout({ children }: LayoutProps) {
             <div className="flex justify-between items-center h-16">
               <div className="flex items-center">
                 <h1 className="text-xl font-semibold text-white">
-                  1inch Fusion+ Swap
+                  SwapNova
                 </h1>
               </div>
               <nav className="flex items-center space-x-4">
@@ -34,7 +34,7 @@ export default function Layout({ children }: LayoutProps) {
         <footer className="bg-gray-800 border-t border-gray-700 mt-auto">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
             <p className="text-center text-sm text-gray-400">
-              © 2025 1inch Fusion+. All rights reserved.
+              © 2025 SwapNova — Empowered by 1inch Fusion+. All rights reserved.
             </p>
           </div>
         </footer>
