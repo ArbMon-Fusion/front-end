@@ -1,6 +1,8 @@
 // import Sdk from "@1inch/cross-chain-sdk";
 // import { parseUnits, parseEther, randomBytes } from "ethers";
 // import { uint8ArrayToHex, UINT_40_MAX } from "@1inch/byte-utils";
+// import { join } from "path";
+// import { existsSync, writeFileSync } from "fs";
 
 // const { Address } = Sdk;
 
@@ -113,6 +115,31 @@
 //     orderData.order.srcChainId,
 //     orderData.order
 //   );
+
+//   // Store the order details
+//   const orderRecord = {
+//     userAddress: await userWallet.getAddress(),
+//     signature,
+//     orderHash: orderData.orderHash,
+//   };
+
+//   const utilsDir = join(__dirname, 'utils');
+//   const filePath = join(utilsDir, 'orderRecords.json');
+
+//   if (!existsSync(utilsDir)) {
+//     require('fs').mkdirSync(utilsDir);
+//   }
+
+//   let records = [];
+//   if (existsSync(filePath)) {
+//     const data = require('fs').readFileSync(filePath);
+//     records = JSON.parse(data);
+//   }
+
+//   records.push(orderRecord);
+//   writeFileSync(filePath, JSON.stringify(records, null, 2));
+
+//   console.log('Order details stored in utils/orderRecords.json:', orderRecord);
 
 //   return {
 //     order: orderData.order,
