@@ -79,6 +79,25 @@ export default function Home(): React.ReactElement {
     }
   }, [authenticated, address]);
 
+
+// Placeholder function to handle order creation
+// async function onCreateOrderClick() {
+//     try {
+//       const result = await handleOrderCreation(userWallet);
+
+//       // Store the secret securely (encrypted in local storage or secure backend)
+//       secureStorage.store(result.orderHash, result.secret);
+
+//       // Submit order to resolver network
+//       await submitOrderToResolvers(result.order, result.signature);
+
+//       // Show success message with order hash for tracking
+//       showSuccess(`Order created: ${result.orderHash}`);
+//     } catch (error) {
+//       showError(`Failed to create order: ${error.message}`);
+//     }
+//   }
+
   const updateBalances = () => {
     if (authenticated && address) {
       setFromBalance(fromToken.symbol === "ETH" ? "2.4567" : "5678.90");
@@ -381,6 +400,7 @@ export default function Home(): React.ReactElement {
                     : "hover:bg-blue-700"
                 }`}
                 onClick={executeSwap}
+                // onClick={}
                 disabled={!authenticated || isSwapping || !fromAmount}
               >
                 {isSwapping
