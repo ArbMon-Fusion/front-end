@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useWallets, usePrivy } from "@privy-io/react-auth";
+import SignOrderButton from "./components/SignOrder";
 
 export default function Home(): React.ReactElement {
   const { wallets, ready } = useWallets();
@@ -376,18 +377,11 @@ export default function Home(): React.ReactElement {
                 </div>
                 <div className="flex justify-between text-sm">
                   <div className="text-center">
-                    <span className="text-white font-medium">
-                      1 {fromToken.symbol} = {currentRate.toFixed(2)}{" "}
-                      {toToken.symbol}
-                    </span>
-                    <span className="text-gray-400">Exchange Rate</span>
-                  </div>
-                  <div className="text-center">
-                    <span className="text-white font-medium">~30s</span>
+                    <span className="text-white font-medium"> ~30s </span>
                     <span className="text-gray-400">Est. Time</span>
                   </div>
                   <div className="text-center">
-                    <span className="text-white font-medium">$0.00</span>
+                    <span className="text-white font-medium">$0.00 </span>
                     <span className="text-gray-400">Gas Fee</span>
                   </div>
                 </div>
@@ -407,8 +401,9 @@ export default function Home(): React.ReactElement {
                   ? "⏳ Swapping..."
                   : fromAmount
                   ? "🚀 Execute Gasless Swap"
-                  : "Enter Amount"}
+                  : "Order Intiate"}
               </button>
+              <SignOrderButton/>
             </div>
 
             <div
