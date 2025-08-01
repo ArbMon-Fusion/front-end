@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useWallets, usePrivy } from "@privy-io/react-auth";
 import SignOrderButton from "./components/SignOrder";
+import { fetchBalances, formatBalance, getBalanceForToken, BalanceInfo } from "./utils/balance";
 
 export default function Home(): React.ReactElement {
   const { wallets, ready } = useWallets();
@@ -11,17 +12,35 @@ export default function Home(): React.ReactElement {
   const [toAmount, setToAmount] = useState<string>("");
   const [isSwapping, setIsSwapping] = useState<boolean>(false);
   const [currentRate, setCurrentRate] = useState<number>(99.87); // 1 ETH = 99.87 MON
-  const [fromBalance, setFromBalance] = useState<string>("0.00");
-  const [toBalance, setToBalance] = useState<string>("0.00");
+  const [balances, setBalances] = useState<{
+    arbitrumSepolia: BalanceInfo;
+    monadTestnet: BalanceInfo;
+  }>({
+    arbitrumSepolia: {
+      balance: '0',
+      formatted: '0.00',
+      symbol: 'ETH',
+      chain: 'Arbitrum Sepolia',
+      isLoading: true,
+    },
+    monadTestnet: {
+      balance: '0',
+      formatted: '0.00',
+      symbol: 'MON',
+      chain: 'Monad Testnet',
+      isLoading: true,
+    },
+  });
   const [fromToken, setFromToken] = useState<{ symbol: string; chain: string }>(
-    { symbol: "ETH", chain: "Ethereum" }
+    { symbol: "WETH", chain: "Arbitrum Sepolia" }
   );
   const [toToken, setToToken] = useState<{ symbol: string; chain: string }>({
-    symbol: "MON",
-    chain: "Monad",
+    symbol: "WMON",
+    chain: "Monad Testnet",
   });
   const [showStatusPanel, setShowStatusPanel] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
+  const [isSwapButtonHovered, setIsSwapButtonHovered] = useState<boolean>(false);
   const [steps, setSteps] = useState<
     Array<{
       id: string;
@@ -68,42 +87,72 @@ export default function Home(): React.ReactElement {
   const isValidChain =
     typeof chainId === "number" && acceptedChains.includes(chainId);
 
+  // Fetch balances from both networks
+  const fetchAndUpdateBalances = async () => {
+    if (!authenticated || !address) {
+      setBalances({
+        arbitrumSepolia: {
+          balance: '0',
+          formatted: '0.00',
+          symbol: 'WETH',
+          chain: 'Arbitrum Sepolia',
+          isLoading: false,
+        },
+        monadTestnet: {
+          balance: '0',
+          formatted: '0.00',
+          symbol: 'WMON',
+          chain: 'Monad Testnet',
+          isLoading: false,
+        },
+      });
+      return;
+    }
+
+    try {
+      const fetchedBalances = await fetchBalances(address);
+      setBalances(fetchedBalances);
+    } catch (error) {
+      console.error('Error fetching balances:', error);
+      setBalances(prev => ({
+        arbitrumSepolia: {
+          ...prev.arbitrumSepolia,
+          isLoading: false,
+          error: 'Failed to fetch balance',
+        },
+        monadTestnet: {
+          ...prev.monadTestnet,
+          isLoading: false,
+          error: 'Failed to fetch balance',
+        },
+      }));
+    }
+  };
+
   // Update balances based on wallet connection
   useEffect(() => {
-    if (authenticated && address) {
-      // Placeholder: Fetch real balances (replace with actual API call)
-      setFromBalance("2.4567"); // Example ETH balance
-      setToBalance("5678.90"); // Example MON balance
-    } else {
-      setFromBalance("0.00");
-      setToBalance("0.00");
-    }
+    fetchAndUpdateBalances();
   }, [authenticated, address]);
 
+  // Refresh balances every 30 seconds
+  useEffect(() => {
+    if (!authenticated || !address) return;
 
-// Placeholder function to handle order creation
-// async function onCreateOrderClick() {
-//     try {
-//       const result = await handleOrderCreation(userWallet);
+    const interval = setInterval(() => {
+      fetchAndUpdateBalances();
+    }, 30000); // 30 seconds
 
-//       // Store the secret securely (encrypted in local storage or secure backend)
-//       secureStorage.store(result.orderHash, result.secret);
+    return () => clearInterval(interval);
+  }, [authenticated, address]);
 
-//       // Submit order to resolver network
-//       await submitOrderToResolvers(result.order, result.signature);
+  const getFromBalance = () => {
+    const balanceInfo = getBalanceForToken(balances, fromToken.symbol);
+    return balanceInfo.isLoading ? 'Loading...' : formatBalance(balanceInfo.formatted);
+  };
 
-//       // Show success message with order hash for tracking
-//       showSuccess(`Order created: ${result.orderHash}`);
-//     } catch (error) {
-//       showError(`Failed to create order: ${error.message}`);
-//     }
-//   }
-
-  const updateBalances = () => {
-    if (authenticated && address) {
-      setFromBalance(fromToken.symbol === "ETH" ? "2.4567" : "5678.90");
-      setToBalance(toToken.symbol === "MON" ? "5678.90" : "2.4567");
-    }
+  const getToBalance = () => {
+    const balanceInfo = getBalanceForToken(balances, toToken.symbol);
+    return balanceInfo.isLoading ? 'Loading...' : formatBalance(balanceInfo.formatted);
   };
 
   const handleAmountInput = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -118,13 +167,12 @@ export default function Home(): React.ReactElement {
     const tempToken = fromToken;
     setFromToken(toToken);
     setToToken(tempToken);
-    setCurrentRate(fromToken.symbol === "ETH" ? 99.87 : 0.01002);
-    updateBalances();
+    setCurrentRate(fromToken.symbol === "WETH" ? 99.87 : 0.01002);
     if (fromAmount) {
       setToAmount(
         (
           parseFloat(fromAmount) *
-          (fromToken.symbol === "ETH" ? 99.87 : 0.01002)
+          (fromToken.symbol === "WETH" ? 99.87 : 0.01002)
         ).toFixed(4)
       );
     }
@@ -189,6 +237,8 @@ export default function Home(): React.ReactElement {
         },
       ]);
       setIsSwapping(false);
+      // Refresh balances after swap completion
+      fetchAndUpdateBalances();
     }, 1000);
   };
 
@@ -211,10 +261,6 @@ export default function Home(): React.ReactElement {
     }, 5000);
     return () => clearInterval(interval);
   }, [authenticated, isSwapping, fromAmount]);
-
-  useEffect(() => {
-    updateBalances();
-  }, [fromToken, toToken]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -241,182 +287,163 @@ export default function Home(): React.ReactElement {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white font-inter relative">
-      {/* <div className="text-center py-10">
-        <p className="text-sm text-gray-400">
-          Gasless Cross-Chain Swaps • Ethereum ↔ Monad
-        </p>
-      </div> */}
-
-      <div className="max-w-md mx-auto px-4">
+      <div className="max-w-md mx-auto px-4 pt-8">
         {!authenticated && (
-          <div className="bg-gray-800 rounded-lg p-4 mb-4 text-center">
-            <p className="text-yellow-400 mb-2">
+          <div className="bg-gray-800 rounded-xl p-4 mb-6 text-center border border-gray-700 shadow-sm">
+            <p className="text-yellow-400 mb-2 font-medium">
               Please connect your wallet to proceed.
             </p>
           </div>
         )}
         {authenticated && address && (
-          <div className="bg-gray-800 rounded-lg p-4 mb-4 text-center">
-            <p className="text-green-400 mb-2">
-              Connected: {address.slice(0, 6)}...{address.slice(-4)}
-              {/* {!isValidChain && (
-                <span className="text-red-500 text-xs ml-2">
-                  Switch to Arbitrum Sepolia or Monad.
-                </span>
-              )} */}
+          <div className="bg-gray-800 rounded-xl p-4 mb-6 text-center border border-gray-700 shadow-sm">
+            <p className="text-green-400 mb-2 font-medium">
+              Cross-Chain Swap WETH ↔ WMON
             </p>
           </div>
         )}
         {authenticated && (
           <>
-            <div className="bg-gray-800 rounded-2xl p-6 shadow-lg">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-semibold">Cross-Chain Swap</h2>
-                <span className="bg-blue-600 text-white px-2 py-1 rounded-full text-xs font-medium">
+            <div className="bg-gray-800 rounded-2xl p-6 shadow-sm border border-gray-700">
+              <div className="flex justify-between items-center mb-6">
+                <span className="bg-blue-600 text-white px-3 py-1.5 rounded-full text-xs font-semibold">
                   ⚡ Gasless
                 </span>
+                <div className="text-xs text-gray-400">
+                  Rate: 1 {fromToken.symbol} = {currentRate.toFixed(4)} {toToken.symbol}
+                </div>
               </div>
 
-              <div className="bg-gray-700 bg-opacity-50 rounded-lg p-4 mb-4 border border-blue-500">
-                <div className="flex justify-between items-center mb-2 text-sm text-gray-400">
+              <div className="bg-gray-700 rounded-xl p-4 mb-4 border border-gray-600 transition-all duration-200 hover:bg-gray-650">
+                <div className="flex justify-between items-center mb-2 text-sm text-gray-300">
                   <span>From</span>
                   <span
-                    className="cursor-pointer hover:text-white"
-                    onClick={() => setFromAmount(fromBalance)}
+                    className="cursor-pointer hover:text-white transition-colors duration-200 font-medium"
+                    onClick={() => setFromAmount(getFromBalance())}
                   >
-                    Balance: {fromBalance}
+                    Balance: {getFromBalance()}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <input
                     type="text"
-                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-500 outline-none"
+                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-400 outline-none"
                     placeholder="0.0"
                     value={fromAmount}
                     onChange={handleAmountInput}
                     disabled={!authenticated}
                   />
-                  <div className="flex items-center space-x-2 ml-2">
-                    <span className="text-white font-medium">
+                  <div className="flex items-center space-x-2 ml-3 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500">
+                    <span className="text-white font-semibold">
                       {fromToken.symbol}
                     </span>
-                    <span className="text-blue-400 text-xs">
+                    <span className="text-blue-300 text-xs font-medium">
                       {fromToken.chain}
                     </span>
-                    <svg
-                      className="w-4 h-4 text-gray-400"
-                      fill="currentColor"
-                      viewBox="0 0 12 12"
-                    >
-                      <path d="M6 9L1.5 4.5L2.91 3.09L6 6.18L9.09 3.09L10.5 4.5L6 9Z" />
-                    </svg>
                   </div>
                 </div>
               </div>
 
-              <div className="flex justify-center mb-4">
+              <div className="flex justify-center mb-4 relative">
                 <button
-                  className="bg-gray-700 rounded-full w-10 h-10 flex items-center justify-center hover:bg-gray-600 transition-colors"
+                  className={`relative bg-gray-700 rounded-full w-12 h-12 flex items-center justify-center transition-all duration-200 border border-gray-600 hover:bg-gray-600 hover:scale-105 ${
+                    isSwapButtonHovered ? 'shadow-md' : 'shadow-sm'
+                  }`}
                   onClick={swapTokens}
                   disabled={!authenticated}
+                  onMouseEnter={() => setIsSwapButtonHovered(true)}
+                  onMouseLeave={() => setIsSwapButtonHovered(false)}
                 >
                   <svg
-                    className="w-5 h-5 text-white"
-                    fill="currentColor"
+                    className={`w-5 h-5 text-gray-300 transition-transform duration-200 ${
+                      isSwapButtonHovered ? 'rotate-180' : ''
+                    }`}
+                    fill="none"
+                    stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
-                    <path d="M7 14l5-5 5 5H7z" />
-                    <path d="M7 10l5 5 5-5H7z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
                   </svg>
                 </button>
               </div>
 
-              <div className="bg-gray-700 bg-opacity-50 rounded-lg p-4 mb-4 border border-blue-500">
-                <div className="flex justify-between items-center mb-2 text-sm text-gray-400">
+              <div className="bg-gray-700 rounded-xl p-4 mb-4 border border-gray-600 transition-all duration-200 hover:bg-gray-650">
+                <div className="flex justify-between items-center mb-2 text-sm text-gray-300">
                   <span>To</span>
                   <span
-                    className="cursor-pointer hover:text-white"
-                    onClick={() => setFromAmount(toBalance)}
+                    className="cursor-pointer hover:text-white transition-colors duration-200 font-medium"
+                    onClick={() => setFromAmount(getToBalance())}
                   >
-                    Balance: {toBalance}
+                    Balance: {getToBalance()}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <input
                     type="text"
-                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-500 outline-none"
+                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-400 outline-none"
                     placeholder="0.0"
                     value={toAmount}
                     readOnly
                     disabled={!authenticated}
                   />
-                  <div className="flex items-center space-x-2 ml-2">
-                    <span className="text-white font-medium">
+                  <div className="flex items-center space-x-2 ml-3 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500">
+                    <span className="text-white font-semibold">
                       {toToken.symbol}
                     </span>
-                    <span className="text-blue-400 text-xs">
+                    <span className="text-green-300 text-xs font-medium">
                       {toToken.chain}
                     </span>
-                    <svg
-                      className="w-4 h-4 text-gray-400"
-                      fill="currentColor"
-                      viewBox="0 0 12 12"
-                    >
-                      <path d="M6 9L1.5 4.5L2.91 3.09L6 6.18L9.09 3.09L10.5 4.5L6 9Z" />
-                    </svg>
                   </div>
                 </div>
               </div>
 
-              <div className="bg-gray-700 bg-opacity-50 rounded-lg p-4 mb-4 border border-blue-500">
-                <div className="flex justify-between items-center mb-2 text-sm text-gray-400">
-                  <span>Best Route via Fusion+</span>
-                  <span className="bg-blue-600 text-white px-2 py-1 rounded-full text-xs">
+              <div className="bg-blue-900/30 rounded-xl p-4 mb-6 border border-blue-700/50">
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-sm font-medium text-blue-200">Best Route via Fusion+</span>
+                  <span className="bg-blue-600 text-white px-2 py-1 rounded-full text-xs font-semibold">
                     Best Rate
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <div className="text-center">
-                    <span className="text-white font-medium"> ~30s </span>
-                    <span className="text-gray-400">Est. Time</span>
+                    <span className="text-white font-semibold">~30s</span>
+                    <span className="text-gray-400 block text-xs">Est. Time</span>
                   </div>
                   <div className="text-center">
-                    <span className="text-white font-medium">$0.00 </span>
-                    <span className="text-gray-400">Gas Fee</span>
+                    <span className="text-white font-semibold">$0.00</span>
+                    <span className="text-gray-400 block text-xs">Gas Fee</span>
                   </div>
                 </div>
               </div>
 
               <button
-                className={`w-full bg-blue-600 text-white py-3 rounded-lg text-lg font-semibold ${
+                className={`w-full bg-blue-600 text-white py-4 rounded-xl text-lg font-semibold transition-all duration-200 shadow-sm hover:shadow-md ${
                   isSwapping || !fromAmount
                     ? "opacity-50 cursor-not-allowed"
-                    : "hover:bg-blue-700"
+                    : "hover:bg-blue-700 hover:scale-[1.02]"
                 }`}
                 onClick={executeSwap}
-                // onClick={}
                 disabled={!authenticated || isSwapping || !fromAmount}
               >
                 {isSwapping
                   ? "⏳ Swapping..."
                   : fromAmount
                   ? "🚀 Execute Gasless Swap"
-                  : "Order Intiate"}
+                  : "Enter Amount"}
               </button>
-              <SignOrderButton/>
             </div>
 
             <div
               ref={statusPanelRef}
-              className={`bg-gray-800 rounded-2xl p-6 mt-4 ${
-                showStatusPanel ? "block" : "hidden"
+              className={`bg-gray-800 rounded-2xl p-6 mt-6 border border-gray-700 shadow-sm transition-all duration-300 ${
+                showStatusPanel ? "block opacity-100 translate-y-0" : "hidden opacity-0 translate-y-2"
               }`}
             >
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center">
                   {steps.some((step) => step.text.includes("Completed")) ? (
                     <svg
-                      className="w-4 h-4 text-white"
+                      className="w-5 h-5 text-white"
                       fill="currentColor"
                       viewBox="0 0 24 24"
                     >
@@ -424,7 +451,7 @@ export default function Home(): React.ReactElement {
                     </svg>
                   ) : (
                     <svg
-                      className="w-4 h-4 text-white"
+                      className="w-5 h-5 text-white animate-pulse"
                       fill="currentColor"
                       viewBox="0 0 24 24"
                     >
@@ -432,44 +459,44 @@ export default function Home(): React.ReactElement {
                     </svg>
                   )}
                 </div>
-                <h3 className="font-semibold text-lg">
+                <h3 className="font-semibold text-xl text-white">
                   {steps.some((step) => step.text.includes("Completed"))
                     ? "🎉 Cross-Chain Swap Completed!"
                     : "Cross-Chain Swap in Progress"}
                 </h3>
               </div>
 
-              <div className="w-full h-1 bg-gray-700 rounded-full overflow-hidden mb-4">
+              <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden mb-6">
                 <div
-                  className="h-full bg-blue-600 transition-all duration-500"
+                  className="h-full bg-blue-600 transition-all duration-500 rounded-full"
                   style={{ width: `${progress}%` }}
                 ></div>
               </div>
 
-              <div className="flex flex-col gap-3">
-                {steps.map((step) => (
-                  <div key={step.id} className="flex items-center gap-3 py-2">
+              <div className="flex flex-col gap-4">
+                {steps.map((step, index) => (
+                  <div key={step.id} className="flex items-center gap-4 py-3 animate-fadeIn" style={{ animationDelay: `${index * 100}ms` }}>
                     <div
-                      className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-semibold ${
+                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-200 ${
                         step.status === "completed"
                           ? "bg-blue-600 text-white"
                           : step.status === "pending"
                           ? "bg-yellow-500 text-white animate-spin"
-                          : "bg-gray-700 text-gray-400"
+                          : "bg-gray-600 text-gray-300"
                       }`}
                     >
                       {step.status === "completed"
                         ? "✓"
                         : step.status === "pending"
                         ? "⟳"
-                        : step.id.charAt(step.id.length - 1)}
+                        : index + 1}
                     </div>
                     <span
-                      className={`flex-1 text-sm ${
+                      className={`flex-1 text-sm transition-all duration-200 ${
                         step.status === "completed"
-                          ? "text-white"
-                          : step.status === "pending"
                           ? "text-white font-medium"
+                          : step.status === "pending"
+                          ? "text-white font-semibold"
                           : "text-gray-400"
                       }`}
                     >
@@ -478,7 +505,9 @@ export default function Home(): React.ReactElement {
                     {step.txLink && (
                       <a
                         href={step.txLink}
-                        className="text-blue-400 text-xs border border-blue-400 border-opacity-30 px-2 py-1 rounded-md hover:text-blue-300 hover:border-blue-300 transition-all duration-200"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-300 text-xs border border-blue-600 px-3 py-1.5 rounded-lg hover:text-blue-200 hover:border-blue-500 hover:bg-blue-600/20 transition-all duration-200"
                       >
                         {step.txLink
                           ? (step.txLink.split("/").pop() ?? "").substring(
@@ -496,24 +525,24 @@ export default function Home(): React.ReactElement {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-3 gap-5 max-w-4xl mx-auto mt-10 px-4">
-        <div className="bg-gray-800 bg-opacity-50 rounded-lg p-4 text-center hover:bg-gray-700 transition-colors">
-          <div className="text-2xl mb-2">⚡</div>
-          <h3 className="font-semibold">Gasless Swaps</h3>
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-3 gap-6 max-w-4xl mx-auto mt-16 px-4 pb-8">
+        <div className="bg-gray-800 rounded-xl p-6 text-center border border-gray-700 hover:border-gray-600 transition-all duration-200 hover:scale-[1.02] shadow-sm">
+          <div className="text-3xl mb-4">⚡</div>
+          <h3 className="font-semibold text-lg mb-2 text-white">Gasless Swaps</h3>
           <p className="text-sm text-gray-400">
             No gas fees for users. Resolvers handle all blockchain costs.
           </p>
         </div>
-        <div className="bg-gray-800 bg-opacity-50 rounded-lg p-4 text-center hover:bg-gray-700 transition-colors">
-          <div className="text-2xl mb-2">🔒</div>
-          <h3 className="font-semibold">Secure Escrow</h3>
+        <div className="bg-gray-800 rounded-xl p-6 text-center border border-gray-700 hover:border-gray-600 transition-all duration-200 hover:scale-[1.02] shadow-sm">
+          <div className="text-3xl mb-4">🔒</div>
+          <h3 className="font-semibold text-lg mb-2 text-white">Secure Escrow</h3>
           <p className="text-sm text-gray-400">
             Smart contracts with hashlock/timelock ensure safe atomic swaps.
           </p>
         </div>
-        <div className="bg-gray-800 bg-opacity-50 rounded-lg p-4 text-center hover:bg-gray-700 transition-colors">
-          <div className="text-2xl mb-2">🌉</div>
-          <h3 className="font-semibold">Cross-Chain</h3>
+        <div className="bg-gray-800 rounded-xl p-6 text-center border border-gray-700 hover:border-gray-600 transition-all duration-200 hover:scale-[1.02] shadow-sm">
+          <div className="text-3xl mb-4">🌉</div>
+          <h3 className="font-semibold text-lg mb-2 text-white">Cross-Chain</h3>
           <p className="text-sm text-gray-400">
             Seamless swaps between Ethereum and Monad ecosystems.
           </p>
@@ -529,9 +558,26 @@ export default function Home(): React.ReactElement {
             transform: rotate(360deg);
           }
         }
+        
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        
         .animate-spin {
           animation: spin 1s linear infinite;
         }
+        
+        .animate-fadeIn {
+          animation: fadeIn 0.5s ease-out forwards;
+        }
+        
         .font-inter {
           font-family: "Inter", sans-serif;
         }
