@@ -1,0 +1,20 @@
+{
+    "contractAddresses": {
+        "arbitrum": {
+            "resolver": "0xF1bF3e727Cb948C19d9D3b8c0a73cDf0a822bb04",
+            "factory": "0x06770B86ABee7B3991f235BE4b6d920862979e13",
+            "limitOrderProtocol": "0xfde2d93A9D538940A9899CA6bEFa2517D9A0B23f",
+            "escrowSrcImpl": "0xdf72A53658b379205832eA29beACD273Bb38c91a",
+            "escrowDstImpl": "0xb5D6A8D096e9DbeD4DD7F1b05f5b0c7F6e831666",
+            "WETH": "0x980B62Da83eFf3D4576C647993b0c1D7faf17c73"
+        },
+        "monad": {
+            "resolver": "0xF1bF3e727Cb948C19d9D3b8c0a73cDf0a822bb04",
+            "factory": "0x06770B86ABee7B3991f235BE4b6d920862979e13",
+            "limitOrderProtocol": "0xfde2d93A9D538940A9899CA6bEFa2517D9A0B23f",
+            "escrowSrcImpl": "0xdf72A53658b379205832eA29beACD273Bb38c91a",
+            "escrowDstImpl": "0xb5D6A8D096e9DbeD4DD7F1b05f5b0c7F6e831666",
+            "WMON": "0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701"
+        }
+    }
+}

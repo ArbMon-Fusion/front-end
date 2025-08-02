@@ -29,6 +29,9 @@
     "eslint": "^9",
     "eslint-config-next": "15.4.5",
     "tailwindcss": "^4",
-    "typescript": "^5"
-  }
+    "typescript": "^5",
+    "@1inch/byte-utils": "3.1.0",
+    "@1inch/cross-chain-sdk": "file:../Fusion_sdks/cross-chain-sdk"
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

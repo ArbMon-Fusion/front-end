@@ -1,142 +1,135 @@
-// import Sdk from "@1inch/cross-chain-sdk";
-// import { parseUnits, parseEther, randomBytes, Signer } from "ethers";
-// import { uint8ArrayToHex, UINT_40_MAX } from "@1inch/byte-utils";
-// import { join } from "path";
-// import { existsSync, writeFileSync, mkdirSync, readFileSync } from "fs";
+"use client";
+import { 
+  Address, 
+  CrossChainOrder, 
+  HashLock, 
+  TimeLocks, 
+  AuctionDetails,
+  randBigInt
+} from "@1inch/cross-chain-sdk";
+import { parseUnits, parseEther, randomBytes, Signer } from "ethers";
+import { uint8ArrayToHex, UINT_40_MAX } from "@1inch/byte-utils";
+import contractAddresses from "../../../deployedAddresses/addresses.json";
 
-// const { Address } = Sdk;
+// Contract addresses from deployed contracts
+const WETH = contractAddresses.contractAddresses.arbitrum.WETH;
+const WMON = contractAddresses.contractAddresses.monad.WMON;
+const srcChainId = 421614; // Arbitrum Sepolia
+const dstChainId = 10143;  // Monad Testnet
 
-// export async function createCrossChainOrder(params: {
-//   userAddress: string;
-//   srcChainId: number;
-//   dstChainId: number;
-//   escrowFactoryAddress: string;
-//   srcTokenAddress: string;
-//   dstTokenAddress: string;
-//   makingAmount: string;
-//   takingAmount: string;
-//   tokenDecimals: number;
-//   resolverAddress: string;
-//   allowPartialFills?: boolean;
-//   allowMultipleFills?: boolean;
-// }) {
-//   const secret = uint8ArrayToHex(randomBytes(32));
-//   const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+export async function createCrossChainOrder(
+  userAddress: string,
+  swapAmount: string, // Amount in ETH (e.g., "0.01")
+  swapDirection: "WETH_TO_WMON" | "WMON_TO_WETH" = "WETH_TO_WMON"
+) {
+  const secret = uint8ArrayToHex(randomBytes(32));
+  const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+  
+  // Calculate amounts based on 1 WETH = 0.9 WMON pricing
+  const makingAmount = parseUnits(swapAmount, 18);
+  const takingAmount = swapDirection === "WETH_TO_WMON" 
+    ? parseUnits((parseFloat(swapAmount) * 0.9).toString(), 18) // 0.9 WMON per WETH
+    : parseUnits((parseFloat(swapAmount) / 0.9).toString(), 18); // 1.11 WETH per WMON
 
-//   const order = Sdk.CrossChainOrder.new(
-//     new Address(params.escrowFactoryAddress),
-//     {
-//       salt: Sdk.randBigInt(BigInt(1000)),
-//       maker: new Address(params.userAddress),
-//       makingAmount: parseUnits(params.makingAmount, params.tokenDecimals),
-//       takingAmount: parseUnits(params.takingAmount, params.tokenDecimals),
-//       makerAsset: new Address(params.srcTokenAddress),
-//       takerAsset: new Address(params.dstTokenAddress),
-//     },
-//     {
-//       hashLock: params.allowMultipleFills
-//         ? Sdk.HashLock.forMultipleFills(generateMultipleSecrets())
-//         : Sdk.HashLock.forSingleFill(secret),
-//       timeLocks: Sdk.TimeLocks.new({
-//         srcWithdrawal: BigInt(10),
-//         srcPublicWithdrawal: BigInt(120),
-//         srcCancellation: BigInt(121),
-//         srcPublicCancellation: BigInt(122),
-//         dstWithdrawal: BigInt(10),
-//         dstPublicWithdrawal: BigInt(100),
-//         dstCancellation: BigInt(101),
-//       }),
-//       srcChainId: params.srcChainId,
-//       dstChainId: params.dstChainId,
-//       srcSafetyDeposit: parseEther("0.001"),
-//       dstSafetyDeposit: parseEther("0.001"),
-//     },
-//     {
-//       auction: new Sdk.AuctionDetails({
-//         initialRateBump: 0,
-//         points: [],
-//         duration: BigInt(120),
-//         startTime: currentTimestamp,
-//       }),
-//       whitelist: [
-//         {
-//           address: new Address(params.resolverAddress),
-//           allowFrom: BigInt(0),
-//         },
-//       ],
-//       resolvingStartTime: BigInt(0),
-//     },
-//     {
-//       nonce: Sdk.randBigInt(UINT_40_MAX),
-//       allowPartialFills: params.allowPartialFills || false,
-//       allowMultipleFills: params.allowMultipleFills || false,
-//     }
-//   );
+  const makerAsset = swapDirection === "WETH_TO_WMON" ? WETH : WMON;
+  const takerAsset = swapDirection === "WETH_TO_WMON" ? WMON : WETH;
+  const srcFactory = swapDirection === "WETH_TO_WMON" 
+    ? contractAddresses.contractAddresses.arbitrum.factory
+    : contractAddresses.contractAddresses.monad.factory;
+  const resolverAddress = swapDirection === "WETH_TO_WMON"
+    ? contractAddresses.contractAddresses.arbitrum.resolver
+    : contractAddresses.contractAddresses.monad.resolver;
 
-//   return {
-//     order,
-//     secret,
-//     orderHash: order.getOrderHash(params.srcChainId),
-//   };
-// }
+  console.log(`🔄 Creating ${swapDirection} order:`, {
+    makingAmount: swapAmount,
+    takingAmount: swapDirection === "WETH_TO_WMON" 
+      ? (parseFloat(swapAmount) * 0.9).toString()
+      : (parseFloat(swapAmount) / 0.9).toString(),
+    makerAsset,
+    takerAsset
+  });
 
-// function generateMultipleSecrets() {
-//   const secrets = Array.from({ length: 11 }).map(() =>
-//     uint8ArrayToHex(randomBytes(32))
-//   );
-//   return Sdk.HashLock.getMerkleLeaves(secrets);
-// }
+  // Mirror exact test script order creation
+  const order = CrossChainOrder.new(
+    new Address(srcFactory),
+    {
+      salt: randBigInt(BigInt(1000)),
+      maker: new Address(userAddress),
+      makingAmount,
+      takingAmount,
+      makerAsset: new Address(makerAsset),
+      takerAsset: new Address(takerAsset),
+    },
+    {
+      hashLock: HashLock.forSingleFill(secret),
+      timeLocks: TimeLocks.new({
+        // Use same timelock values as test script
+        srcWithdrawal: BigInt(10),
+        srcPublicWithdrawal: BigInt(120),
+        srcCancellation: BigInt(121),
+        srcPublicCancellation: BigInt(122),
+        dstWithdrawal: BigInt(10),
+        dstPublicWithdrawal: BigInt(100),
+        dstCancellation: BigInt(101)
+      }),
+      srcChainId: swapDirection === "WETH_TO_WMON" ? srcChainId : dstChainId,
+      dstChainId: swapDirection === "WETH_TO_WMON" ? dstChainId : srcChainId,
+      srcSafetyDeposit: parseEther('0.0001'), // Match test script
+      dstSafetyDeposit: parseEther('0.0001')
+    },
+    {
+      auction: new AuctionDetails({
+        initialRateBump: 0,
+        points: [],
+        duration: BigInt(240), // 4 minutes like test script
+        startTime: currentTimestamp
+      }),
+      whitelist: [
+        {
+          address: new Address(resolverAddress),
+          allowFrom: BigInt(0)
+        }
+      ],
+      resolvingStartTime: BigInt(0)
+    },
+    {
+      nonce: randBigInt(UINT_40_MAX),
+      allowPartialFills: false, // Match test script
+      allowMultipleFills: false
+    }
+  );
 
-// export async function handleOrderCreation(
-//   signer: Signer,
-//   userAddress: string
-//   //need more params for order creation from frontend
-// ) {
-//   const orderData = await createCrossChainOrder({
-//     userAddress,
-//     srcChainId: 1,
-//     dstChainId: 56,
-//     escrowFactoryAddress: "0x...", // Replace
-//     srcTokenAddress: "0xA0b86a33E6441E6C8C7C7B0b2C4C6C6C6C6C6C6C", // Replace
-//     dstTokenAddress: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
-//     makingAmount: "100",
-//     takingAmount: "99",
-//     tokenDecimals: 6,
-//     resolverAddress: "0x...", // Replace
-//     allowPartialFills: false,
-//     allowMultipleFills: false,
-//   });
+  return {
+    order,
+    secret,
+    orderHash: order.getOrderHash(swapDirection === "WETH_TO_WMON" ? srcChainId : dstChainId),
+    swapDirection,
+    makingAmount: swapAmount,
+    takingAmount: swapDirection === "WETH_TO_WMON" 
+      ? (parseFloat(swapAmount) * 0.9).toString()
+      : (parseFloat(swapAmount) / 0.9).toString()
+  };
+}
 
-//   const orderHash = orderData.order.getOrderHash(orderData.order.srcChainId);
-//   const signature = await signer.signMessage(orderHash);
-
-//   const orderRecord = {
-//     userAddress,
-//     signature,
-//     orderData: orderData.order.toJSON(),
-//     orderHash: orderData.orderHash,
-//   };
-
-//   const utilsDir = join(__dirname, "utils");
-//   const filePath = join(utilsDir, "orderRecords.json");
-
-//   if (!existsSync(utilsDir)) mkdirSync(utilsDir);
-
-//   let records = [];
-//   if (existsSync(filePath)) {
-//     const data = readFileSync(filePath);
-//     records = JSON.parse(data.toString());
-//   }
-
-//   records.push(orderRecord);
-//   writeFileSync(filePath, JSON.stringify(records, null, 2));
-
-//   console.log("Order details stored in utils/orderRecords.json:", orderRecord);
-
-//   return {
-//     order: orderData.order,
-//     signature,
-//     secret: orderData.secret,
-//     orderHash: orderData.orderHash,
-//   };
-// }
+// Sign order function that mirrors test script's EIP-712 signing approach
+export async function signCrossChainOrder(signer: Signer, order: any, chainId: number) {
+  // Mirror test script: const signature = await srcChainUser.signOrder(srcChainId, order)
+  // Uses EIP-712 signing like wallet.ts line 85-93
+  
+  const typedData = order.getTypedData(chainId);
+  const signature = await signer.signTypedData(
+    typedData.domain,
+    { Order: typedData.types[typedData.primaryType] },
+    typedData.message
+  );
+  
+  const orderHash = order.getOrderHash(chainId);
+  
+  console.log(`📋 Order hash: ${orderHash}`);
+  console.log(`✍️ Order signature (EIP-712): ${signature}`);
+  
+  return {
+    orderHash,
+    signature
+  };
+}

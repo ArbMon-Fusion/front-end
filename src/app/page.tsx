@@ -346,18 +346,16 @@ export default function Home(): React.ReactElement {
 
               <div className="flex justify-center mb-4 relative">
                 <button
-                  className={`relative bg-gray-700 rounded-full w-12 h-12 flex items-center justify-center transition-all duration-200 border border-gray-600 hover:bg-gray-600 hover:scale-105 ${
-                    isSwapButtonHovered ? 'shadow-md' : 'shadow-sm'
-                  }`}
+                  className={`relative bg-gray-700 rounded-full w-12 h-12 flex items-center justify-center transition-all duration-200 border border-gray-600 hover:bg-gray-600 hover:scale-105 ${isSwapButtonHovered ? 'shadow-md' : 'shadow-sm'
+                    }`}
                   onClick={swapTokens}
                   disabled={!authenticated}
                   onMouseEnter={() => setIsSwapButtonHovered(true)}
                   onMouseLeave={() => setIsSwapButtonHovered(false)}
                 >
                   <svg
-                    className={`w-5 h-5 text-gray-300 transition-transform duration-200 ${
-                      isSwapButtonHovered ? 'rotate-180' : ''
-                    }`}
+                    className={`w-5 h-5 text-gray-300 transition-transform duration-200 ${isSwapButtonHovered ? 'rotate-180' : ''
+                      }`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -417,27 +415,27 @@ export default function Home(): React.ReactElement {
               </div>
 
               <button
-                className={`w-full bg-blue-600 text-white py-4 rounded-xl text-lg font-semibold transition-all duration-200 shadow-sm hover:shadow-md ${
-                  isSwapping || !fromAmount
+                className={`w-full bg-blue-600 text-white py-4 rounded-xl text-lg font-semibold transition-all duration-200 shadow-sm hover:shadow-md ${isSwapping || !fromAmount
                     ? "opacity-50 cursor-not-allowed"
                     : "hover:bg-blue-700 hover:scale-[1.02]"
-                }`}
+                  }`}
                 onClick={executeSwap}
                 disabled={!authenticated || isSwapping || !fromAmount}
               >
                 {isSwapping
                   ? "⏳ Swapping..."
                   : fromAmount
-                  ? "🚀 Execute Gasless Swap"
-                  : "Enter Amount"}
+                    ? "🚀 Submit order"
+                    : "Enter Amount"}
               </button>
+              <SignOrderButton />
+
             </div>
 
             <div
               ref={statusPanelRef}
-              className={`bg-gray-800 rounded-2xl p-6 mt-6 border border-gray-700 shadow-sm transition-all duration-300 ${
-                showStatusPanel ? "block opacity-100 translate-y-0" : "hidden opacity-0 translate-y-2"
-              }`}
+              className={`bg-gray-800 rounded-2xl p-6 mt-6 border border-gray-700 shadow-sm transition-all duration-300 ${showStatusPanel ? "block opacity-100 translate-y-0" : "hidden opacity-0 translate-y-2"
+                }`}
             >
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center">
@@ -477,28 +475,26 @@ export default function Home(): React.ReactElement {
                 {steps.map((step, index) => (
                   <div key={step.id} className="flex items-center gap-4 py-3 animate-fadeIn" style={{ animationDelay: `${index * 100}ms` }}>
                     <div
-                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-200 ${
-                        step.status === "completed"
+                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-200 ${step.status === "completed"
                           ? "bg-blue-600 text-white"
                           : step.status === "pending"
-                          ? "bg-yellow-500 text-white animate-spin"
-                          : "bg-gray-600 text-gray-300"
-                      }`}
+                            ? "bg-yellow-500 text-white animate-spin"
+                            : "bg-gray-600 text-gray-300"
+                        }`}
                     >
                       {step.status === "completed"
                         ? "✓"
                         : step.status === "pending"
-                        ? "⟳"
-                        : index + 1}
+                          ? "⟳"
+                          : index + 1}
                     </div>
                     <span
-                      className={`flex-1 text-sm transition-all duration-200 ${
-                        step.status === "completed"
+                      className={`flex-1 text-sm transition-all duration-200 ${step.status === "completed"
                           ? "text-white font-medium"
                           : step.status === "pending"
-                          ? "text-white font-semibold"
-                          : "text-gray-400"
-                      }`}
+                            ? "text-white font-semibold"
+                            : "text-gray-400"
+                        }`}
                     >
                       {step.text}
                     </span>
@@ -511,9 +507,9 @@ export default function Home(): React.ReactElement {
                       >
                         {step.txLink
                           ? (step.txLink.split("/").pop() ?? "").substring(
-                              0,
-                              10
-                            ) + "..."
+                            0,
+                            10
+                          ) + "..."
                           : ""}
                       </a>
                     )}
