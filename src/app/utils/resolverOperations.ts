@@ -1,16 +1,21 @@
 "use client";
-import { 
-  JsonRpcProvider, 
-  Wallet, 
-  Interface, 
+import {
+  JsonRpcProvider,
+  Wallet,
+  Interface,
   Signature,
   TransactionRequest,
   Contract
 } from "ethers";
-import { 
-  Address, 
-  TakerTraits, 
-  AmountMode
+import {
+  Address,
+  TakerTraits,
+  AmountMode,
+  Immutables,
+  DstImmutablesComplement,
+  HashLock,
+  TimeLocks,
+  EscrowFactory
 } from "@1inch/cross-chain-sdk";
 import contractAddresses from "../../../deployedAddresses/addresses.json";
 import ResolverABI from "../../../Abi/Resolver.json";
@@ -25,14 +30,14 @@ const chains = {
     chainId: 421614
   },
   monad: {
-    rpc: "https://monad-testnet.g.alchemy.com/v2/TRxeW47imEqxxdPubmvTuhcG334Udxb0", 
+    rpc: "https://monad-testnet.g.alchemy.com/v2/TRxeW47imEqxxdPubmvTuhcG334Udxb0",
     chainId: 10143
   }
 };
 
 export class ResolverOperations {
   private resolverInterface: Interface;
-  
+
   constructor(
     public readonly srcResolverAddress: string,
     public readonly dstResolverAddress: string
@@ -52,9 +57,9 @@ export class ResolverOperations {
     const { r, yParityAndS: vs } = Signature.from(signature);
     const { args, trait } = takerTraits.encode();
     const immutables = order.toSrcImmutables(
-      chainId, 
-      new Address(this.srcResolverAddress), 
-      amount, 
+      chainId,
+      new Address(this.srcResolverAddress),
+      amount,
       hashLock || order.escrowExtension.hashLockInfo
     );
 
@@ -81,7 +86,7 @@ export class ResolverOperations {
   // Phase 3: Deploy destination escrow
   public deployDst(immutables: any): TransactionRequest {
     console.log("🔄 Deploying destination escrow...");
-    
+
     return {
       to: this.dstResolverAddress,
       data: this.resolverInterface.encodeFunctionData('deployDst', [
@@ -100,7 +105,7 @@ export class ResolverOperations {
     immutables: any
   ): TransactionRequest {
     const resolverAddress = side === 'src' ? this.srcResolverAddress : this.dstResolverAddress;
-    
+
     return {
       to: resolverAddress,
       data: this.resolverInterface.encodeFunctionData('withdraw', [
@@ -116,15 +121,15 @@ export class ResolverOperations {
 export async function executePhase2(orderData: any) {
   try {
     console.log("🚀 Starting Phase 2: Source chain order fill and escrow deployment");
-    
+
     // Initialize providers and wallets (mirrors test script setup)
     const srcProvider = new JsonRpcProvider(chains.arbitrum.rpc, chains.arbitrum.chainId, {
       cacheTimeout: -1,
       staticNetwork: true
     });
-    
+
     const srcChainResolver = new Wallet(DEPLOYER_PRIVATE_KEY, srcProvider);
-    
+
     // Create resolver contract instance (mirrors test script line 259)
     const resolverContract = new ResolverOperations(
       contractAddresses.contractAddresses.arbitrum.resolver,
@@ -154,7 +159,7 @@ export async function executePhase2(orderData: any) {
       ...deployTx,
       gasLimit: 10_000_000
     });
-    
+
     const receipt = await response.wait(1);
     console.log(`✅ Source escrow deployed! Tx: ${receipt?.hash}`);
 
@@ -204,6 +209,311 @@ export async function executePhase2(orderData: any) {
 
   } catch (error) {
     console.error("❌ Phase 2 failed:", error);
+    throw error;
+  }
+}
+
+// Phase 3 main function - mirrors test script destination escrow deployment
+export async function executePhase3() {
+  try {
+    console.log("🚀 Starting Phase 3: Destination escrow deployment on Monad");
+
+    // Get Phase 2 data
+    const phase2Data = (window as any).phase2Data;
+    const orderData = (window as any).orderData;
+
+    console.log("📋 Phase 2 data before start phase 3:", phase2Data);
+    console.log("📋 order data before start phase 3:", orderData);
+    if (!phase2Data || !orderData) {
+      throw new Error("Please complete Phase 1 and Phase 2 first");
+    }
+
+    // Initialize Monad provider and wallet
+    const dstProvider = new JsonRpcProvider(chains.monad.rpc, chains.monad.chainId, {
+      cacheTimeout: -1,
+      staticNetwork: true
+    });
+
+    const dstChainResolver = new Wallet(DEPLOYER_PRIVATE_KEY!, dstProvider);
+
+    // Create resolver contract instance
+    const resolverContract = new ResolverOperations(
+      contractAddresses.contractAddresses.arbitrum.resolver,
+      contractAddresses.contractAddresses.monad.resolver
+    );
+
+    // Create destination immutables (mirrors test script lines 279-281)
+    console.log("📝 Creating destination immutables...");
+    const srcEscrowEventData = phase2Data.srcEscrowEvent;
+    console.log("📋 Source escrow event data:", srcEscrowEventData);
+
+    // Reconstruct SDK objects from raw event data (mirrors escrow-factory.ts lines 63-79)
+    const rawImmutables = srcEscrowEventData[0]; // srcImmutables from event
+    const rawComplement = srcEscrowEventData[1]; // dstImmutablesComplement from event
+    
+    console.log("📋 Raw immutables:", rawImmutables);
+    console.log("📋 Raw complement:", rawComplement);
+
+    // Create SDK Immutables object (mirrors escrow-factory.ts lines 63-72)
+    const immutables = Immutables.new({
+      orderHash: rawImmutables[0],
+      hashLock: HashLock.fromString(rawImmutables[1]),
+      maker: Address.fromBigInt(rawImmutables[2]),
+      taker: Address.fromBigInt(rawImmutables[3]),
+      token: Address.fromBigInt(rawImmutables[4]),
+      amount: rawImmutables[5],
+      safetyDeposit: rawImmutables[6],
+      timeLocks: TimeLocks.fromBigInt(rawImmutables[7])
+    });
+
+    // Create SDK DstImmutablesComplement object (mirrors escrow-factory.ts lines 73-79)
+    const complement = DstImmutablesComplement.new({
+      maker: Address.fromBigInt(rawComplement[0]),
+      amount: rawComplement[1],
+      token: Address.fromBigInt(rawComplement[2]),
+      safetyDeposit: rawComplement[3]
+    });
+
+    // Create destination immutables (mirrors test script lines 279-281)
+    const dstImmutables = immutables
+      .withComplement(complement)
+      .withTaker(new Address(resolverContract.dstResolverAddress));
+    
+    console.log("📋 Destination immutables created:", dstImmutables);
+
+    // Check resolver balance and allowance (mirrors test script lines 286-297)
+    console.log("💰 Checking resolver WMON balance and allowance...");
+
+    const wmonContract = new Contract(
+      contractAddresses.contractAddresses.monad.WMON,
+      ['function balanceOf(address) view returns (uint256)', 'function allowance(address,address) view returns (uint256)'],
+      dstProvider
+    );
+
+    const resolverAddress = await dstChainResolver.getAddress();
+    const resolverWmonBalance = await wmonContract.balanceOf(resolverAddress);
+    const resolverAllowance = await wmonContract.allowance(
+      resolverAddress,
+      contractAddresses.contractAddresses.monad.factory
+    );
+
+    console.log(`💰 Resolver WMON balance: ${resolverWmonBalance.toString()}`);
+    console.log(`🔓 Resolver WMON allowance to factory: ${resolverAllowance.toString()}`);
+    console.log(`💸 Required WMON amount: ${orderData.order.takingAmount.toString()}`);
+    console.log(`💸 Required MON safety deposit: 0.0001 ETH`);
+
+    // Deploy destination escrow (mirrors test script lines 299-301)
+    console.log("📝 Deploying destination escrow on Monad...");
+
+    const deployDstTx = resolverContract.deployDst(dstImmutables);
+
+    const response = await dstChainResolver.sendTransaction({
+      ...deployDstTx,
+      gasLimit: 10_000_000
+    });
+
+    const receipt = await response.wait(1);
+    const blockTimestamp = BigInt((await receipt?.getBlock())?.timestamp || 0);
+
+    console.log(`✅ Destination escrow created on Monad: ${receipt?.hash}`);
+
+    // Store data for Phase 4
+    (window as any).phase3Data = {
+      dstImmutables: dstImmutables.withDeployedAt(blockTimestamp),
+      dstDepositHash: receipt?.hash,
+      blockTimestamp,
+      resolverContract,
+      dstChainResolver: dstChainResolver.address
+    };
+
+    console.log("✅ Phase 3 Complete!");
+    console.log("📊 Results:", {
+      txHash: receipt?.hash,
+      blockTimestamp: blockTimestamp.toString(),
+      gasUsed: receipt?.gasUsed?.toString()
+    });
+
+    return {
+      success: true,
+      txHash: receipt?.hash,
+      blockTimestamp,
+      dstImmutables
+    };
+
+  } catch (error) {
+    console.error("❌ Phase 3 failed:", error);
+    throw error;
+  }
+}
+
+// Phase 4 main function - mirrors test script withdrawals
+export async function executePhase4() {
+  try {
+    console.log("🚀 Starting Phase 4: Complete withdrawals");
+    
+    // Get all previous phase data
+    const phase2Data = (window as any).phase2Data;
+    const phase3Data = (window as any).phase3Data;
+    const orderData = (window as any).orderData;
+    
+    if (!phase2Data || !phase3Data || !orderData) {
+      throw new Error("Please complete all previous phases first");
+    }
+
+    console.log("📋 Phase 2 data:", phase2Data);
+    console.log("📋 Phase 3 data:", phase3Data);
+    console.log("📋 Order data:", orderData);
+
+    // Initialize providers and wallets for both chains
+    const srcProvider = new JsonRpcProvider(chains.arbitrum.rpc, chains.arbitrum.chainId, {
+      cacheTimeout: -1,
+      staticNetwork: true
+    });
+    
+    const dstProvider = new JsonRpcProvider(chains.monad.rpc, chains.monad.chainId, {
+      cacheTimeout: -1,
+      staticNetwork: true
+    });
+    
+    const srcChainResolver = new Wallet(DEPLOYER_PRIVATE_KEY!, srcProvider);
+    const dstChainResolver = new Wallet(DEPLOYER_PRIVATE_KEY!, dstProvider);
+    
+    // Create resolver contract instance
+    const resolverContract = new ResolverOperations(
+      contractAddresses.contractAddresses.arbitrum.resolver,
+      contractAddresses.contractAddresses.monad.resolver
+    );
+
+    // Reconstruct immutables from Phase 2 data (same as Phase 3)
+    const srcEscrowEventData = phase2Data.srcEscrowEvent;
+    const rawImmutables = srcEscrowEventData[0];
+    const rawComplement = srcEscrowEventData[1];
+    
+    const srcImmutables = Immutables.new({
+      orderHash: rawImmutables[0],
+      hashLock: HashLock.fromString(rawImmutables[1]),
+      maker: Address.fromBigInt(rawImmutables[2]),
+      taker: Address.fromBigInt(rawImmutables[3]),
+      token: Address.fromBigInt(rawImmutables[4]),
+      amount: rawImmutables[5],
+      safetyDeposit: rawImmutables[6],
+      timeLocks: TimeLocks.fromBigInt(rawImmutables[7])
+    });
+
+    // Wait for finality period (mirrors test script line 305-306)
+    console.log('⏰ Waiting for finality period (15 seconds)...');
+    await new Promise(resolve => setTimeout(resolve, 15000));
+
+    // Calculate escrow addresses (mirrors test script lines 309-320)
+    console.log("📍 Calculating escrow addresses...");
+    
+    const srcEscrowFactory = new EscrowFactory(new Address(contractAddresses.contractAddresses.arbitrum.factory));
+    const dstEscrowFactory = new EscrowFactory(new Address(contractAddresses.contractAddresses.monad.factory));
+    
+    const srcEscrowAddress = srcEscrowFactory.getSrcEscrowAddress(
+      srcImmutables,
+      new Address(contractAddresses.contractAddresses.arbitrum.escrowSrcImpl)
+    );
+
+    const dstEscrowAddress = dstEscrowFactory.getDstEscrowAddress(
+      srcImmutables,
+      DstImmutablesComplement.new({
+        maker: Address.fromBigInt(rawComplement[0]),
+        amount: rawComplement[1],
+        token: Address.fromBigInt(rawComplement[2]),
+        safetyDeposit: rawComplement[3]
+      }),
+      phase3Data.blockTimestamp,
+      new Address(resolverContract.dstResolverAddress),
+      new Address(contractAddresses.contractAddresses.monad.escrowDstImpl)
+    );
+
+    console.log(`📍 Source escrow address: ${srcEscrowAddress}`);
+    console.log(`📍 Destination escrow address: ${dstEscrowAddress}`);
+
+    // User withdraws WMON from destination chain (mirrors test script lines 322-327)
+    console.log(`💸 User withdrawing WMON from Monad escrow: ${dstEscrowAddress}`);
+    
+    const userWithdrawTx = resolverContract.withdraw(
+      'dst', 
+      dstEscrowAddress.toString(), 
+      orderData.secret, 
+      phase3Data.dstImmutables
+    );
+
+    const userWithdrawResponse = await dstChainResolver.sendTransaction({
+      ...userWithdrawTx,
+      gasLimit: 10_000_000
+    });
+    
+    const userWithdrawReceipt = await userWithdrawResponse.wait(1);
+    console.log(`✅ User withdrew WMON: ${userWithdrawReceipt?.hash}`);
+
+    // Resolver withdraws WETH from source chain (mirrors test script lines 329-334)
+    console.log(`💸 Resolver withdrawing WETH from Arbitrum escrow: ${srcEscrowAddress}`);
+    
+    const resolverWithdrawTx = resolverContract.withdraw(
+      'src', 
+      srcEscrowAddress.toString(), 
+      orderData.secret, 
+      srcImmutables
+    );
+
+    const resolverWithdrawResponse = await srcChainResolver.sendTransaction({
+      ...resolverWithdrawTx,
+      gasLimit: 10_000_000
+    });
+    
+    const resolverWithdrawReceipt = await resolverWithdrawResponse.wait(1);
+    console.log(`✅ Resolver withdrew WETH: ${resolverWithdrawReceipt?.hash}`);
+
+    // Check final token balances (mirrors test script lines 336-341)
+    console.log("💰 Checking final token balances...");
+    
+    const wethContract = new Contract(
+      contractAddresses.contractAddresses.arbitrum.WETH,
+      ['function balanceOf(address) view returns (uint256)'],
+      srcProvider
+    );
+    
+    const wmonContract = new Contract(
+      contractAddresses.contractAddresses.monad.WMON,
+      ['function balanceOf(address) view returns (uint256)'],
+      dstProvider
+    );
+
+    // Get user address from order data
+    const userAddress = orderData.order.maker.toString();
+    const resolverAddress = await srcChainResolver.getAddress();
+
+    const finalUserWethBalance = await wethContract.balanceOf(userAddress);
+    const finalUserWmonBalance = await wmonContract.balanceOf(userAddress);
+    const finalResolverWethBalance = await wethContract.balanceOf(resolverAddress);
+
+    console.log("✅ Phase 4 Complete!");
+    console.log("📊 Final Results:", {
+      userWithdrawTx: userWithdrawReceipt?.hash,
+      resolverWithdrawTx: resolverWithdrawReceipt?.hash,
+      userWethBalance: finalUserWethBalance.toString(),
+      userWmonBalance: finalUserWmonBalance.toString(),
+      resolverWethBalance: finalResolverWethBalance.toString(),
+      srcEscrowAddress: srcEscrowAddress.toString(),
+      dstEscrowAddress: dstEscrowAddress.toString()
+    });
+
+    return {
+      success: true,
+      userWithdrawTx: userWithdrawReceipt?.hash,
+      resolverWithdrawTx: resolverWithdrawReceipt?.hash,
+      finalBalances: {
+        userWeth: finalUserWethBalance.toString(),
+        userWmon: finalUserWmonBalance.toString(),
+        resolverWeth: finalResolverWethBalance.toString()
+      }
+    };
+
+  } catch (error) {
+    console.error("❌ Phase 4 failed:", error);
     throw error;
   }
 }

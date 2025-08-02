@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { useUnifiedSigner } from "../utils/wallet";
 import { createCrossChainOrder, signCrossChainOrder } from "../utils/createCrossChainOrder";
-import { executePhase2 } from "../utils/resolverOperations";
+import { executePhase2, executePhase3, executePhase4 } from "../utils/resolverOperations";
 
 export default function SignOrderButton() {
   const { signer, address } = useUnifiedSigner();
   const [isLoading, setIsLoading] = useState(false);
   const [isPhase2Loading, setIsPhase2Loading] = useState(false);
+  const [isPhase3Loading, setIsPhase3Loading] = useState(false);
+  const [isPhase4Loading, setIsPhase4Loading] = useState(false);
   const [swapAmount, setSwapAmount] = useState("0.01");
   const [swapDirection, setSwapDirection] = useState<"WETH_TO_WMON" | "WMON_TO_WETH">("WETH_TO_WMON");
 
@@ -89,6 +91,43 @@ export default function SignOrderButton() {
     }
   };
 
+  const handlePhase3 = async () => {
+    try {
+      setIsPhase3Loading(true);
+      console.log("🚀 Starting Phase 3: Destination escrow deployment");
+      
+      const result = await executePhase3();
+      
+      alert(`✅ Phase 3 Complete! Tx: ${result.txHash?.slice(0, 10)}...`);
+      console.log("🎉 Phase 3 Results:", result);
+      
+    } catch (error) {
+      console.error("❌ Phase 3 failed:", error);
+      alert("Phase 3 failed. Check console for details.");
+    } finally {
+      setIsPhase3Loading(false);
+    }
+  };
+
+  const handlePhase4 = async () => {
+    try {
+      setIsPhase4Loading(true);
+      console.log("🚀 Starting Phase 4: Final withdrawals");
+      
+      const result = await executePhase4();
+      
+      alert(`✅ Phase 4 Complete! All withdrawals successful!`);
+      console.log("🎉 Phase 4 Results:", result);
+      console.log("🎉 Cross-chain swap completed successfully!");
+      
+    } catch (error) {
+      console.error("❌ Phase 4 failed:", error);
+      alert("Phase 4 failed. Check console for details.");
+    } finally {
+      setIsPhase4Loading(false);
+    }
+  };
+
   return (
     <div className="space-y-4 p-4 border rounded-lg">
       <h3 className="text-lg font-semibold">Create Cross-Chain Order</h3>
@@ -148,6 +187,30 @@ export default function SignOrderButton() {
         disabled={isPhase2Loading}
       >
         {isPhase2Loading ? "Deploying Escrow..." : "Phase 2: Fill Order & Deploy Source Escrow"}
+      </button>
+
+      <button
+        className={`w-full px-4 py-2 rounded font-medium ${
+          isPhase3Loading 
+            ? "bg-gray-400 cursor-not-allowed" 
+            : "bg-blue-600 hover:bg-blue-700 text-white"
+        }`}
+        onClick={handlePhase3}
+        disabled={isPhase3Loading}
+      >
+        {isPhase3Loading ? "Deploying on Monad..." : "Phase 3: Deploy Destination Escrow"}
+      </button>
+
+      <button
+        className={`w-full px-4 py-2 rounded font-medium ${
+          isPhase4Loading 
+            ? "bg-gray-400 cursor-not-allowed" 
+            : "bg-orange-600 hover:bg-orange-700 text-white"
+        }`}
+        onClick={handlePhase4}
+        disabled={isPhase4Loading}
+      >
+        {isPhase4Loading ? "Processing Withdrawals..." : "Phase 4: Complete Withdrawals"}
       </button>
 
       {!address && (
