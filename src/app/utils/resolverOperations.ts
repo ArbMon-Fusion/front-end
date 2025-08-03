@@ -122,8 +122,18 @@ export async function executePhase2(orderData: any) {
   try {
     console.log("🚀 Starting Phase 2: Source chain order fill and escrow deployment");
 
+    // Dynamic chain selection based on swap direction
+    const isWethToWmon = orderData.swapDirection === "WETH_TO_WMON";
+    const srcChain = isWethToWmon ? chains.arbitrum : chains.monad;
+    const dstChain = isWethToWmon ? chains.monad : chains.arbitrum;
+    const srcContracts = isWethToWmon ? contractAddresses.contractAddresses.arbitrum : contractAddresses.contractAddresses.monad;
+    const dstContracts = isWethToWmon ? contractAddresses.contractAddresses.monad : contractAddresses.contractAddresses.arbitrum;
+
+    console.log(`📍 Source chain: ${isWethToWmon ? 'Arbitrum Sepolia' : 'Monad Testnet'}`);
+    console.log(`📍 Destination chain: ${isWethToWmon ? 'Monad Testnet' : 'Arbitrum Sepolia'}`);
+
     // Initialize providers and wallets (mirrors test script setup)
-    const srcProvider = new JsonRpcProvider(chains.arbitrum.rpc, chains.arbitrum.chainId, {
+    const srcProvider = new JsonRpcProvider(srcChain.rpc, srcChain.chainId, {
       cacheTimeout: -1,
       staticNetwork: true
     });
@@ -132,8 +142,8 @@ export async function executePhase2(orderData: any) {
 
     // Create resolver contract instance (mirrors test script line 259)
     const resolverContract = new ResolverOperations(
-      contractAddresses.contractAddresses.arbitrum.resolver,
-      contractAddresses.contractAddresses.monad.resolver
+      srcContracts.resolver,
+      dstContracts.resolver
     );
 
     // Create TakerTraits (mirrors test script lines 267-270)
@@ -165,7 +175,7 @@ export async function executePhase2(orderData: any) {
 
     // Get source escrow deployment event (mirrors test script line 278)
     const srcFactory = new Contract(
-      contractAddresses.contractAddresses.arbitrum.factory,
+      srcContracts.factory,
       EscrowFactoryABI.abi,
       srcProvider
     );
@@ -216,7 +226,7 @@ export async function executePhase2(orderData: any) {
 // Phase 3 main function - mirrors test script destination escrow deployment
 export async function executePhase3() {
   try {
-    console.log("🚀 Starting Phase 3: Destination escrow deployment on Monad");
+    console.log("🚀 Starting Phase 3: Destination escrow deployment");
 
     // Get Phase 2 data
     const phase2Data = (window as any).phase2Data;
@@ -228,8 +238,16 @@ export async function executePhase3() {
       throw new Error("Please complete Phase 1 and Phase 2 first");
     }
 
-    // Initialize Monad provider and wallet
-    const dstProvider = new JsonRpcProvider(chains.monad.rpc, chains.monad.chainId, {
+    // Dynamic chain selection based on swap direction
+    const isWethToWmon = orderData.swapDirection === "WETH_TO_WMON";
+    const dstChain = isWethToWmon ? chains.monad : chains.arbitrum;
+    const srcContracts = isWethToWmon ? contractAddresses.contractAddresses.arbitrum : contractAddresses.contractAddresses.monad;
+    const dstContracts = isWethToWmon ? contractAddresses.contractAddresses.monad : contractAddresses.contractAddresses.arbitrum;
+
+    console.log(`📍 Destination chain: ${isWethToWmon ? 'Monad Testnet' : 'Arbitrum Sepolia'}`);
+
+    // Initialize destination provider and wallet
+    const dstProvider = new JsonRpcProvider(dstChain.rpc, dstChain.chainId, {
       cacheTimeout: -1,
       staticNetwork: true
     });
@@ -238,8 +256,8 @@ export async function executePhase3() {
 
     // Create resolver contract instance
     const resolverContract = new ResolverOperations(
-      contractAddresses.contractAddresses.arbitrum.resolver,
-      contractAddresses.contractAddresses.monad.resolver
+      srcContracts.resolver,
+      dstContracts.resolver
     );
 
     // Create destination immutables (mirrors test script lines 279-281)
@@ -250,7 +268,7 @@ export async function executePhase3() {
     // Reconstruct SDK objects from raw event data (mirrors escrow-factory.ts lines 63-79)
     const rawImmutables = srcEscrowEventData[0]; // srcImmutables from event
     const rawComplement = srcEscrowEventData[1]; // dstImmutablesComplement from event
-    
+
     console.log("📋 Raw immutables:", rawImmutables);
     console.log("📋 Raw complement:", rawComplement);
 
@@ -278,32 +296,38 @@ export async function executePhase3() {
     const dstImmutables = immutables
       .withComplement(complement)
       .withTaker(new Address(resolverContract.dstResolverAddress));
-    
+
     console.log("📋 Destination immutables created:", dstImmutables);
 
     // Check resolver balance and allowance (mirrors test script lines 286-297)
-    console.log("💰 Checking resolver WMON balance and allowance...");
+    const dstTokenAddress = isWethToWmon
+      ? contractAddresses.contractAddresses.monad.WMON
+      : contractAddresses.contractAddresses.arbitrum.WETH;
+    const dstTokenSymbol = isWethToWmon ? "WMON" : "WETH";
+    const dstChainName = isWethToWmon ? "Monad" : "Arbitrum";
 
-    const wmonContract = new Contract(
-      contractAddresses.contractAddresses.monad.WMON,
+    console.log(`💰 Checking resolver ${dstTokenSymbol} balance and allowance...`);
+
+    const dstTokenContract = new Contract(
+      dstTokenAddress,
       ['function balanceOf(address) view returns (uint256)', 'function allowance(address,address) view returns (uint256)'],
       dstProvider
     );
 
     const resolverAddress = await dstChainResolver.getAddress();
-    const resolverWmonBalance = await wmonContract.balanceOf(resolverAddress);
-    const resolverAllowance = await wmonContract.allowance(
+    const resolverTokenBalance = await dstTokenContract.balanceOf(resolverAddress);
+    const resolverAllowance = await dstTokenContract.allowance(
       resolverAddress,
-      contractAddresses.contractAddresses.monad.factory
+      dstContracts.factory
     );
 
-    console.log(`💰 Resolver WMON balance: ${resolverWmonBalance.toString()}`);
-    console.log(`🔓 Resolver WMON allowance to factory: ${resolverAllowance.toString()}`);
-    console.log(`💸 Required WMON amount: ${orderData.order.takingAmount.toString()}`);
-    console.log(`💸 Required MON safety deposit: 0.0001 ETH`);
+    console.log(`💰 Resolver ${dstTokenSymbol} balance: ${resolverTokenBalance.toString()}`);
+    console.log(`🔓 Resolver ${dstTokenSymbol} allowance to factory: ${resolverAllowance.toString()}`);
+    console.log(`💸 Required ${dstTokenSymbol} amount: ${orderData.order.takingAmount.toString()}`);
+    console.log(`💸 Required ${dstChainName} safety deposit: 0.0001 ETH`);
 
     // Deploy destination escrow (mirrors test script lines 299-301)
-    console.log("📝 Deploying destination escrow on Monad...");
+    console.log(`📝 Deploying destination escrow on ${dstChainName}...`);
 
     const deployDstTx = resolverContract.deployDst(dstImmutables);
 
@@ -315,7 +339,7 @@ export async function executePhase3() {
     const receipt = await response.wait(1);
     const blockTimestamp = BigInt((await receipt?.getBlock())?.timestamp || 0);
 
-    console.log(`✅ Destination escrow created on Monad: ${receipt?.hash}`);
+    console.log(`✅ Destination escrow created on ${dstChainName}: ${receipt?.hash}`);
 
     // Store data for Phase 4
     (window as any).phase3Data = {
@@ -350,12 +374,12 @@ export async function executePhase3() {
 export async function executePhase4() {
   try {
     console.log("🚀 Starting Phase 4: Complete withdrawals");
-    
+
     // Get all previous phase data
     const phase2Data = (window as any).phase2Data;
     const phase3Data = (window as any).phase3Data;
     const orderData = (window as any).orderData;
-    
+
     if (!phase2Data || !phase3Data || !orderData) {
       throw new Error("Please complete all previous phases first");
     }
@@ -364,31 +388,41 @@ export async function executePhase4() {
     console.log("📋 Phase 3 data:", phase3Data);
     console.log("📋 Order data:", orderData);
 
+    // Dynamic chain selection based on swap direction
+    const isWethToWmon = orderData.swapDirection === "WETH_TO_WMON";
+    const srcChain = isWethToWmon ? chains.arbitrum : chains.monad;
+    const dstChain = isWethToWmon ? chains.monad : chains.arbitrum;
+    const srcContracts = isWethToWmon ? contractAddresses.contractAddresses.arbitrum : contractAddresses.contractAddresses.monad;
+    const dstContracts = isWethToWmon ? contractAddresses.contractAddresses.monad : contractAddresses.contractAddresses.arbitrum;
+
+    console.log(`📍 Source chain: ${isWethToWmon ? 'Arbitrum Sepolia' : 'Monad Testnet'}`);
+    console.log(`📍 Destination chain: ${isWethToWmon ? 'Monad Testnet' : 'Arbitrum Sepolia'}`);
+
     // Initialize providers and wallets for both chains
-    const srcProvider = new JsonRpcProvider(chains.arbitrum.rpc, chains.arbitrum.chainId, {
+    const srcProvider = new JsonRpcProvider(srcChain.rpc, srcChain.chainId, {
       cacheTimeout: -1,
       staticNetwork: true
     });
-    
-    const dstProvider = new JsonRpcProvider(chains.monad.rpc, chains.monad.chainId, {
+
+    const dstProvider = new JsonRpcProvider(dstChain.rpc, dstChain.chainId, {
       cacheTimeout: -1,
       staticNetwork: true
     });
-    
+
     const srcChainResolver = new Wallet(DEPLOYER_PRIVATE_KEY!, srcProvider);
     const dstChainResolver = new Wallet(DEPLOYER_PRIVATE_KEY!, dstProvider);
-    
+
     // Create resolver contract instance
     const resolverContract = new ResolverOperations(
-      contractAddresses.contractAddresses.arbitrum.resolver,
-      contractAddresses.contractAddresses.monad.resolver
+      srcContracts.resolver,
+      dstContracts.resolver
     );
 
     // Reconstruct immutables from Phase 2 data (same as Phase 3)
     const srcEscrowEventData = phase2Data.srcEscrowEvent;
     const rawImmutables = srcEscrowEventData[0];
     const rawComplement = srcEscrowEventData[1];
-    
+
     const srcImmutables = Immutables.new({
       orderHash: rawImmutables[0],
       hashLock: HashLock.fromString(rawImmutables[1]),
@@ -406,10 +440,10 @@ export async function executePhase4() {
 
     // Calculate escrow addresses (mirrors test script lines 309-320)
     console.log("📍 Calculating escrow addresses...");
-    
+
     const srcEscrowFactory = new EscrowFactory(new Address(contractAddresses.contractAddresses.arbitrum.factory));
     const dstEscrowFactory = new EscrowFactory(new Address(contractAddresses.contractAddresses.monad.factory));
-    
+
     const srcEscrowAddress = srcEscrowFactory.getSrcEscrowAddress(
       srcImmutables,
       new Address(contractAddresses.contractAddresses.arbitrum.escrowSrcImpl)
@@ -425,19 +459,24 @@ export async function executePhase4() {
       }),
       phase3Data.blockTimestamp,
       new Address(resolverContract.dstResolverAddress),
-      new Address(contractAddresses.contractAddresses.monad.escrowDstImpl)
+      new Address(dstContracts.escrowDstImpl)
     );
+
+    const srcTokenSymbol = isWethToWmon ? "WETH" : "WMON";
+    const dstTokenSymbol = isWethToWmon ? "WMON" : "WETH";
+    const srcChainName = isWethToWmon ? "Arbitrum" : "Monad";
+    const dstChainName = isWethToWmon ? "Monad" : "Arbitrum";
 
     console.log(`📍 Source escrow address: ${srcEscrowAddress}`);
     console.log(`📍 Destination escrow address: ${dstEscrowAddress}`);
 
-    // User withdraws WMON from destination chain (mirrors test script lines 322-327)
-    console.log(`💸 User withdrawing WMON from Monad escrow: ${dstEscrowAddress}`);
-    
+    // User withdraws tokens from destination chain (mirrors test script lines 322-327)
+    console.log(`💸 User withdrawing ${dstTokenSymbol} from ${dstChainName} escrow: ${dstEscrowAddress}`);
+
     const userWithdrawTx = resolverContract.withdraw(
-      'dst', 
-      dstEscrowAddress.toString(), 
-      orderData.secret, 
+      'dst',
+      dstEscrowAddress.toString(),
+      orderData.secret,
       phase3Data.dstImmutables
     );
 
@@ -445,17 +484,17 @@ export async function executePhase4() {
       ...userWithdrawTx,
       gasLimit: 10_000_000
     });
-    
-    const userWithdrawReceipt = await userWithdrawResponse.wait(1);
-    console.log(`✅ User withdrew WMON: ${userWithdrawReceipt?.hash}`);
 
-    // Resolver withdraws WETH from source chain (mirrors test script lines 329-334)
-    console.log(`💸 Resolver withdrawing WETH from Arbitrum escrow: ${srcEscrowAddress}`);
-    
+    const userWithdrawReceipt = await userWithdrawResponse.wait(1);
+    console.log(`✅ User withdrew ${dstTokenSymbol}: ${userWithdrawReceipt?.hash}`);
+
+    // Resolver withdraws tokens from source chain (mirrors test script lines 329-334)
+    console.log(`💸 Resolver withdrawing ${srcTokenSymbol} from ${srcChainName} escrow: ${srcEscrowAddress}`);
+
     const resolverWithdrawTx = resolverContract.withdraw(
-      'src', 
-      srcEscrowAddress.toString(), 
-      orderData.secret, 
+      'src',
+      srcEscrowAddress.toString(),
+      orderData.secret,
       srcImmutables
     );
 
@@ -463,23 +502,33 @@ export async function executePhase4() {
       ...resolverWithdrawTx,
       gasLimit: 10_000_000
     });
-    
-    const resolverWithdrawReceipt = await resolverWithdrawResponse.wait(1);
-    console.log(`✅ Resolver withdrew WETH: ${resolverWithdrawReceipt?.hash}`);
 
-    // Check final token balances (mirrors test script lines 336-341)
+    const resolverWithdrawReceipt = await resolverWithdrawResponse.wait(1);
+    console.log(`✅ Resolver withdrew ${srcTokenSymbol}: ${resolverWithdrawReceipt?.hash}`);
+
+
     console.log("💰 Checking final token balances...");
-    
+
+    const wethProvider = new JsonRpcProvider(chains.arbitrum.rpc, chains.arbitrum.chainId, {
+      cacheTimeout: -1,
+      staticNetwork: true
+    });
+
     const wethContract = new Contract(
       contractAddresses.contractAddresses.arbitrum.WETH,
       ['function balanceOf(address) view returns (uint256)'],
-      srcProvider
+      wethProvider
     );
+
+    const wmonProvider = new JsonRpcProvider(chains.monad.rpc, chains.monad.chainId, {
+      cacheTimeout: -1,
+      staticNetwork: true
+    });
     
     const wmonContract = new Contract(
       contractAddresses.contractAddresses.monad.WMON,
       ['function balanceOf(address) view returns (uint256)'],
-      dstProvider
+      wmonProvider
     );
 
     // Get user address from order data

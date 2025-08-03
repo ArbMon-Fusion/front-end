@@ -6,7 +6,8 @@ import { useUnifiedSigner } from "./utils/wallet";
 import { createCrossChainOrder, signCrossChainOrder } from "./utils/createCrossChainOrder";
 import { executePhase2, executePhase3, executePhase4 } from "./utils/resolverOperations";
 import { fetchBalances, formatBalance, getBalanceForToken, BalanceInfo } from "./utils/balance";
-import { checkApproval, approveToken, getTokenAndSpenderForDirection } from "./utils/approval";
+import { checkAndRequestApproval, getLOPContract, getTokenAddress } from "./utils/tokenApproval";
+import { parseUnits } from "ethers";
 
 // Declare window.ethereum interface for TypeScript
 declare global {
@@ -62,21 +63,7 @@ export default function Home(): React.ReactElement {
   const [networkError, setNetworkError] = useState<string>("");
   const [showExecutionModal, setShowExecutionModal] = useState<boolean>(false);
   const [swapInProgress, setSwapInProgress] = useState<boolean>(false);
-  const [approvalStatus, setApprovalStatus] = useState<{
-    isApproved: boolean;
-    isChecking: boolean;
-    isApproving: boolean;
-    message: string;
-    lastChecked: number;
-    approvedTokens: Set<string>; // Track which tokens are approved
-  }>({
-    isApproved: false,
-    isChecking: false,
-    isApproving: false,
-    message: "",
-    lastChecked: 0,
-    approvedTokens: new Set()
-  });
+ 
   const [steps, setSteps] = useState<
     Array<{
       id: string;
@@ -93,13 +80,13 @@ export default function Home(): React.ReactElement {
     },
     {
       id: "step2",
-      text: "Deploying source escrow on Arbitrum",
+      text: "Deploying source escrow",
       status: "waiting",
       txLink: "",
     },
     {
       id: "step3",
-      text: "Deploying destination escrow on Monad",
+      text: "Deploying destination escrow",
       status: "waiting",
       txLink: "",
     },
@@ -116,20 +103,21 @@ export default function Home(): React.ReactElement {
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy");
   const walletAddress = connectedWallet?.address || embeddedWallet?.address;
   const chainId = connectedWallet?.chainId;
+  console.log("Connected wallet:", connectedWallet);
   console.log("Line number 113:",chainId);
 
   // Define accepted chain IDs
-  const acceptedChains = [421614, 10143]; // Arbitrum Sepolia ID: 421614, Monad ID: 10143
-  const isValidChain =
-    typeof chainId === "number" && acceptedChains.includes(chainId);
+  console.log("Current chainId type:", typeof chainId, "value:", chainId);
+  // console.log("Is valid chain:", isValidChain);
 
   // Function to switch chain automatically
   const switchChainAutomatically = async (targetChainId: number) => {
     if (!connectedWallet || !window.ethereum) return false;
     
     try {
+      console.log("Attempting to switch to chain:", targetChainId);
       const chainIdHex = `0x${targetChainId.toString(16)}`;
-      
+      console.log("Line number 472:", chainIdHex);
       // First try to switch to the chain
       await window.ethereum.request({
         method: 'wallet_switchEthereumChain',
@@ -188,69 +176,41 @@ export default function Home(): React.ReactElement {
           symbol: 'MON',
           decimals: 18,
         },
-        rpcUrls: ['https://testnet1.monad.xyz'],
+        rpcUrls: ['https://testnet-rpc.monad.xyz'],
         blockExplorerUrls: ['https://monad-testnet.socialscan.io/'],
       };
     }
     return null;
   };
 
-  // Network validation and auto-switching effect
+  // Simple network switching: WETH = Arbitrum Sepolia, WMON = Monad
   useEffect(() => {
-    if (authenticated && connectedWallet && chainId) {
-      // Handle different chainId formats: "eip155:421614", "421614", or 421614
-      let numericChainId: number;
-      
-      if (typeof chainId === 'string') {
-        if (chainId.includes(':')) {
-          // Handle "eip155:421614" format
-          numericChainId = parseInt(chainId.split(':')[1]);
-        } else {
-          // Handle "421614" format
-          numericChainId = parseInt(chainId);
-        }
-      } else {
-        // Handle number format
-        numericChainId = chainId;
-      }
-      
-      console.log("Raw chainId:", chainId);
-      console.log("Parsed chainId:", numericChainId);
-      
-      // Determine which chain is needed for the current swap direction
-      const requiredChainId = fromToken.symbol === "WETH" ? 421614 : 10143; // WETH needs Arbitrum, WMON needs Monad
-      console.log("Required chain ID:", requiredChainId);
+    if (!authenticated || !connectedWallet || !chainId) return;
+    
+    // Parse chainId
+    let numericChainId: number;
+    // if (typeof chainId === 'string' && chainId.includes(':')) {
+    //   numericChainId = parseInt(chainId.split(':')[1]);
+    // } else {
+    //   numericChainId = typeof chainId === 'string' ? parseInt(chainId) : chainId;
+    // }
+    numericChainId = Number(chainId?.toString().split(':').pop());
+    console.log("Line number 472:", numericChainId);
 
-      
-      if (numericChainId !== requiredChainId) {
-        const currentChainName = numericChainId === 421614 ? "Arbitrum Sepolia" :
-                                numericChainId === 10143 ? "Monad Testnet" :
-                                `Chain ${numericChainId}`;
-        console.log("Current chain name:", currentChainName);
-        
-        const requiredChainName = requiredChainId === 421614 ? "Arbitrum Sepolia" : "Monad Testnet";
-        
-        setCurrentChain(currentChainName);
-        setTargetChain(requiredChainName);
-        
-        // Automatically switch to the required chain
-        console.log(`🔄 Attempting to switch from ${currentChainName} to ${requiredChainName}...`);
-        // setNetworkError(`Switching to ${requiredChainName}...`);
-        
-        switchChainAutomatically(requiredChainId).then((success) => {
-          if (!success) {
-            setNetworkError(`Please switch to ${requiredChainName}. Currently on: ${currentChainName}`);
-          } else {
-            setNetworkError("");
-          }
-        });
-      } else {
-        setNetworkError("");
-        setCurrentChain(numericChainId === 421614 ? "Arbitrum Sepolia" : "Monad Testnet");
-        setTargetChain(requiredChainId === 421614 ? "Arbitrum Sepolia" : "Monad Testnet");
-      }
+    // WETH = Arbitrum Sepolia (421614), WMON = Monad (10143)
+    const requiredChainId = fromToken.symbol === "WETH" ? 421614 : 10143;
+    console.log("Line number 472:", numericChainId, requiredChainId);
+    
+    console.log(`Token: ${fromToken.symbol}, Current chain: ${numericChainId}, Required: ${requiredChainId}`);
+    
+    // Switch only if on wrong chain
+    if (numericChainId !== requiredChainId) {
+      console.log(`Switching to ${requiredChainId === 421614 ? 'Arbitrum Sepolia' : 'Monad'}`);
+      switchChainAutomatically(requiredChainId);
+    } else {
+      setNetworkError("");
     }
-  }, [authenticated, chainId, connectedWallet, fromToken.symbol]);
+  }, [fromToken.symbol]);
 
   // Fetch balances from both networks
   const fetchAndUpdateBalances = async () => {
@@ -331,6 +291,9 @@ export default function Home(): React.ReactElement {
 
   const swapTokens = () => {
     if (!authenticated) return;
+    
+    console.log("🔄 Swapping tokens:", fromToken.symbol, "↔", toToken.symbol);
+    
     const tempToken = fromToken;
     setFromToken(toToken);
     setToToken(tempToken);
@@ -346,31 +309,8 @@ export default function Home(): React.ReactElement {
       const calculatedAmount = amount * newRate;
       setToAmount(calculatedAmount > 0 ? calculatedAmount.toFixed(6) : "0");
     }
-  };
-
-  // Helper function to get user-friendly error messages
-  const getUserFriendlyError = (error: unknown): string => {
-    console.error("Technical error:", error); // Log technical details to console
     
-    const errorMessage = (error as Error)?.message?.toLowerCase() || error?.toString?.()?.toLowerCase() || "";
-    
-    if (errorMessage.includes("user rejected") || errorMessage.includes("denied")) {
-      return "Transaction was cancelled. No worries, you can try again anytime!";
-    }
-    if (errorMessage.includes("insufficient")) {
-      return "Insufficient balance. Please check your wallet balance and try again.";
-    }
-    if (errorMessage.includes("network") || errorMessage.includes("connection")) {
-      return "Network connection issue. Please check your internet and try again.";
-    }
-    if (errorMessage.includes("gas")) {
-      return "Gas estimation failed. Please try again in a moment.";
-    }
-    if (errorMessage.includes("nonce")) {
-      return "Transaction conflict detected. Please try again.";
-    }
-    
-    return "Something went wrong. Please try again or contact support if the issue persists.";
+    console.log("✅ After swap - From:", toToken.symbol, "To:", tempToken.symbol);
   };
 
   // Helper function to get explorer URL
@@ -393,172 +333,10 @@ export default function Home(): React.ReactElement {
     setNetworkError("");
     setSwapSuccess(false);
 
-    const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
-    const { tokenAddress, spenderAddress } = getTokenAndSpenderForDirection(swapDirection);
-    const approvalKey = `${tokenAddress}-${spenderAddress}`;
-
-    // Check if we already know this token is approved
-    if (approvalStatus.approvedTokens.has(approvalKey)) {
-      console.log("✅ Token already approved, proceeding with swap");
-      executeRealSwap();
-      return;
-    }
-
-    // Check approval status if not already checked recently (within 5 minutes)
-    const timeSinceLastCheck = Date.now() - approvalStatus.lastChecked;
-    if (timeSinceLastCheck > 5 * 60 * 1000) { // 5 minutes
-      console.log("🔄 Checking approval status...");
-      await checkApprovalStatus();
-    }
-
-    // If not approved, request approval
-    if (!approvalStatus.isApproved) {
-      console.log("🔐 Requesting approval...");
-      await requestApproval();
-    } else {
-      // If already approved, proceed with swap
-      console.log("✅ Token approved, proceeding with swap");
-      executeRealSwap();
-    }
+    // Directly execute the swap - approval is handled in SignOrder component
+    executeRealSwap();
   };
 
-  // Check approval status for current swap direction
-  const checkApprovalStatus = async () => {
-    if (!signer || !fromAmount) return;
-
-    const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
-    const { tokenAddress, spenderAddress } = getTokenAndSpenderForDirection(swapDirection);
-
-    setApprovalStatus(prev => ({ 
-      ...prev, 
-      isChecking: true, 
-      message: "Checking approval status..." 
-    }));
-
-    try {
-      const approval = await checkApproval(signer, tokenAddress, spenderAddress, fromAmount);
-      
-      // Create a unique key for this token-spender combination
-      const approvalKey = `${tokenAddress}-${spenderAddress}`;
-      const newApprovedTokens = new Set(approvalStatus.approvedTokens);
-      
-      if (approval.isApproved) {
-        newApprovedTokens.add(approvalKey);
-      }
-      
-      setApprovalStatus({
-        isApproved: approval.isApproved,
-        isChecking: false,
-        isApproving: false,
-        message: approval.isApproved ? "Approved" : "Approval required",
-        lastChecked: Date.now(),
-        approvedTokens: newApprovedTokens
-      });
-    } catch (error) {
-      console.error("Error checking approval:", error);
-      setApprovalStatus(prev => ({
-        ...prev,
-        isApproved: false,
-        isChecking: false,
-        isApproving: false,
-        message: "Unable to check approval status"
-      }));
-    }
-  };
-
-  // Request approval for unlimited amount
-  const requestApproval = async () => {
-    if (!signer || !fromAmount) return;
-
-    const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
-    const { tokenAddress, spenderAddress } = getTokenAndSpenderForDirection(swapDirection);
-    console.log("Requesting approval for:", tokenAddress, spenderAddress);
-
-    setApprovalStatus(prev => ({ 
-      ...prev, 
-      isApproving: true, 
-      message: "Requesting approval..." 
-    }));
-
-    try {
-      const result = await approveToken(signer, tokenAddress, spenderAddress, "unlimited");
-      
-      if (result.success) {
-        // Add to approved tokens set
-        const approvalKey = `${tokenAddress}-${spenderAddress}`;
-        const newApprovedTokens = new Set(approvalStatus.approvedTokens);
-        newApprovedTokens.add(approvalKey);
-        
-        setApprovalStatus({
-          isApproved: true,
-          isChecking: false,
-          isApproving: false,
-          message: "Approved successfully!",
-          lastChecked: Date.now(),
-          approvedTokens: newApprovedTokens
-        });
-        
-        // Proceed with swap after approval
-        setTimeout(() => {
-          executeRealSwap();
-        }, 1000);
-      } else {
-        setApprovalStatus(prev => ({
-          ...prev,
-          isApproved: false,
-          isChecking: false,
-          isApproving: false,
-          message: result.error || "Approval failed"
-        }));
-      }
-    } catch (error) {
-      console.error("Error requesting approval:", error);
-      const friendlyMsg = getUserFriendlyError(error);
-      setApprovalStatus(prev => ({
-        ...prev,
-        isApproved: false,
-        isChecking: false,
-        isApproving: false,
-        message: friendlyMsg.includes("cancelled") ? "Approval cancelled" : "Approval failed"
-      }));
-    }
-  };
-
-  // Check if current token is already approved
-  const isCurrentTokenApproved = () => {
-    if (!fromAmount || !signer) return false;
-    
-    const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
-    const { tokenAddress, spenderAddress } = getTokenAndSpenderForDirection(swapDirection);
-    const approvalKey = `${tokenAddress}-${spenderAddress}`;
-    
-    return approvalStatus.approvedTokens.has(approvalKey);
-  };
-
-  // Get current approval status for display
-  const getCurrentApprovalStatus = () => {
-    if (!fromAmount || !signer) {
-      return {
-        isApproved: false,
-        message: "",
-        needsCheck: false
-      };
-    }
-
-    const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
-    const { tokenAddress, spenderAddress } = getTokenAndSpenderForDirection(swapDirection);
-    const approvalKey = `${tokenAddress}-${spenderAddress}`;
-    
-    const isApproved = approvalStatus.approvedTokens.has(approvalKey);
-    const timeSinceLastCheck = Date.now() - approvalStatus.lastChecked;
-    const needsCheck = timeSinceLastCheck > 5 * 60 * 1000; // 5 minutes
-    
-    return {
-      isApproved,
-      message: isApproved ? "Token approved" : needsCheck ? "Check approval status" : "Approval required",
-      needsCheck
-    };
-  };
 
   // Real cross-chain swap execution
   const executeRealSwap = async () => {
@@ -580,7 +358,28 @@ export default function Home(): React.ReactElement {
       // Determine swap direction
       const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
       
-      // Update step 1
+      // Update step 1 for approval
+      setSteps(prev => prev.map((step, index) => 
+        index === 0 ? { ...step, status: "pending", text: "Checking token approval..." } : step
+      ));
+      setProgress(15);
+
+      // Token approval step before order creation
+      console.log("🔐 Checking token approval before order creation...");
+      const tokenAddress = getTokenAddress(swapDirection);
+      const lopContract = getLOPContract(swapDirection);
+      const makingAmount = parseUnits(fromAmount, 18);
+      
+      await checkAndRequestApproval(
+        signer,
+        address,
+        tokenAddress,
+        lopContract,
+        makingAmount,
+        swapDirection
+      );
+
+      // Update step 1 for order creation
       setSteps(prev => prev.map((step, index) => 
         index === 0 ? { ...step, status: "pending", text: "Creating and signing cross-chain order..." } : step
       ));
@@ -672,7 +471,7 @@ export default function Home(): React.ReactElement {
           ...step, 
           status: "completed", 
           text: "Withdrawals completed", 
-          txLink: phase4Result.userWithdrawTx ? getExplorerUrl(phase4Result.userWithdrawTx, 10143) : ""
+          txLink: phase4Result.userWithdrawTx ? getExplorerUrl(phase4Result.userWithdrawTx, toToken.symbol === "WMON" ? 10143 : 421614) : ""
         } : step
       ));
       setProgress(100);
@@ -764,18 +563,6 @@ export default function Home(): React.ReactElement {
     }
   }, [showExecutionModal]);
 
-  // Auto-check approval when token or amount changes (but not too frequently)
-  useEffect(() => {
-    if (authenticated && signer && fromAmount && parseFloat(fromAmount) > 0) {
-      const currentStatus = getCurrentApprovalStatus();
-      
-      // Only check if we don't already know it's approved and haven't checked recently
-      if (!currentStatus.isApproved && currentStatus.needsCheck) {
-        console.log("🔄 Auto-checking approval status...");
-        checkApprovalStatus();
-      }
-    }
-  }, [authenticated, signer, fromAmount, fromToken.symbol]);
 
   // Recalculate toAmount when tokens change
   useEffect(() => {
@@ -999,34 +786,17 @@ export default function Home(): React.ReactElement {
                 </div>
               </div>
 
-              {/* Approval Status Indicator - Only show when token is not approved */}
-              {authenticated && fromAmount && parseFloat(fromAmount) > 0 && !getCurrentApprovalStatus().isApproved && (
-                <div className={`mb-4 p-3 rounded-lg border ${
-                  approvalStatus.isApproving || approvalStatus.isChecking
-                    ? "bg-yellow-900/30 border-yellow-600/50"
-                    : "bg-blue-900/30 border-blue-600/50"
-                }`}>
+              {/* Info about approval handling */}
+              {authenticated && fromAmount && parseFloat(fromAmount) > 0 && (
+                <div className="mb-4 p-3 rounded-lg border bg-blue-900/30 border-blue-600/50">
                   <div className="flex items-center justify-between">
-                    <span className={`text-sm font-medium ${
-                      approvalStatus.isApproving || approvalStatus.isChecking
-                        ? "text-yellow-300"
-                        : "text-blue-300"
-                    }`}>
-                      {approvalStatus.isApproving 
-                        ? "⏳ Requesting Approval..." 
-                        : approvalStatus.isChecking
-                        ? "⏳ Checking Approval..."
-                        : "🔐 Approval Required"}
-                    </span>
-                    <span className="text-xs text-gray-400">
-                      {getCurrentApprovalStatus().message}
+                    <span className="text-sm font-medium text-blue-300">
+                      🔐 Token approval handled automatically
                     </span>
                   </div>
-                  {!approvalStatus.isApproving && !approvalStatus.isChecking && (
-                    <p className="text-xs text-gray-400 mt-1">
-                      Approve {fromToken.symbol} for unlimited cross-chain swaps
-                    </p>
-                  )}
+                  <p className="text-xs text-gray-400 mt-1">
+                    {fromToken.symbol} approval will be requested during order creation if needed
+                  </p>
                 </div>
               )}
 
@@ -1036,14 +806,10 @@ export default function Home(): React.ReactElement {
                     ? "bg-gray-600 text-gray-300 cursor-not-allowed"
                     : swapInProgress && !swapSuccess
                     ? "bg-blue-600 hover:bg-blue-700 text-white hover:scale-[1.02] hover:shadow-lg"
-                    : approvalStatus.isApproving
-                    ? "bg-yellow-600 text-white cursor-not-allowed animate-pulse"
-                    : getCurrentApprovalStatus().isApproved
-                    ? "bg-green-600 hover:bg-green-700 text-white hover:scale-[1.02] hover:shadow-lg"
-                    : "bg-blue-600 hover:bg-blue-700 text-white hover:scale-[1.02] hover:shadow-lg"
+                    : "bg-green-600 hover:bg-green-700 text-white hover:scale-[1.02] hover:shadow-lg"
                 }`}
                 onClick={swapInProgress && !swapSuccess ? () => setShowExecutionModal(true) : executeSwap}
-                disabled={!authenticated || isSwapping || !fromAmount || approvalStatus.isApproving || !!networkError}
+                disabled={!authenticated || isSwapping || !fromAmount || !!networkError}
               >
                 {isLoading && (
                   <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer"></div>
@@ -1059,13 +825,7 @@ export default function Home(): React.ReactElement {
                     ? "⏳ Processing Cross-Chain Swap..."
                     : swapInProgress && !swapSuccess
                     ? "🔄 View Progress"
-                    : approvalStatus.isApproving
-                    ? "⏳ Requesting Approval..."
-                    : approvalStatus.isChecking
-                    ? "⏳ Checking Approval..."
-                    : getCurrentApprovalStatus().isApproved
-                    ? "🚀 Create Order"
-                    : "🔐 Approve & Execute Swap"}
+                    : "🚀 Execute Cross-Chain Swap"}
                 </span>
               </button>
 

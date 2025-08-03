@@ -4,18 +4,18 @@ import { PrivyProvider as BasePrivyProvider } from '@privy-io/react-auth';
 import { WagmiProvider } from '@privy-io/wagmi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http } from 'viem';
-import { mainnet, sepolia,arbitrum,monadTestnet } from 'viem/chains';
+import { mainnet, sepolia, arbitrumSepolia, monadTestnet } from 'viem/chains';
 import { createConfig } from 'wagmi';
 
 const queryClient = new QueryClient();
 
 // Wagmi configuration for Privy
 const config = createConfig({
-  chains: [mainnet, sepolia, arbitrum,monadTestnet],
+  chains: [mainnet, sepolia, arbitrumSepolia, monadTestnet],
   transports: {
     [mainnet.id]: http(),
     [sepolia.id]: http(),
-    [arbitrum.id]: http(),
+    [arbitrumSepolia.id]: http(),
     [monadTestnet.id]: http(),
   },
 });
@@ -41,7 +41,7 @@ export function PrivyProvider({ children }: PrivyProviderProps) {
           requireUserPasswordOnCreate: false,
         },
         // Supported chains
-        supportedChains: [mainnet,sepolia,arbitrum,monadTestnet],
+        supportedChains: [mainnet, sepolia, arbitrumSepolia, monadTestnet],
       }}
     >
       <QueryClientProvider client={queryClient}>
