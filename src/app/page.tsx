@@ -582,8 +582,18 @@ export default function Home(): React.ReactElement {
         )}
         {authenticated && address && (
           <div className="bg-gray-800 rounded-xl p-4 mb-6 text-center border border-gray-700 shadow-sm">
-            <p className="text-green-400 mb-2 font-medium">
-              Ready for Cross-Chain Swap
+            <div className="flex items-center justify-center gap-3 mb-2">
+              <img 
+                src="/1inch_logo.png" 
+                alt="1inch" 
+                className="w-6 h-6 transition-transform duration-200 hover:scale-110 hover:rotate-12 cursor-pointer" 
+              />
+              <p className="text-green-400 font-medium">
+                Powered by 1inch Fusion+
+              </p>
+            </div>
+            <p className="text-xs text-gray-400">
+              Seamless cross-chain token exchange
             </p>
           </div>
         )}
@@ -614,18 +624,20 @@ export default function Home(): React.ReactElement {
                 <div className="flex items-center justify-between">
                   <input
                     type="text"
-                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-400 outline-none transition-all duration-200 group-hover:text-blue-100"
+                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-400 outline-none transition-all duration-200 group-hover:text-blue-100 mr-3"
                     placeholder="0.0"
                     value={fromAmount}
                     onChange={handleAmountInput}
                     disabled={!authenticated}
                   />
-                  <div className="flex items-center space-x-2 ml-3 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500">
-                    <span className="text-white font-semibold">
+                  <div className="flex items-center space-x-2 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 flex-shrink-0">
+                    <img 
+                      src={fromToken.symbol === "WETH" ? "/arbsepolia_logo.png" : "/monad_logo.png"} 
+                      alt={fromToken.symbol}
+                      className="w-6 h-6 rounded-full"
+                    />
+                    <span className="text-white font-semibold whitespace-nowrap">
                       {fromToken.symbol}
-                    </span>
-                    <span className="text-blue-300 text-xs font-medium">
-                      {fromToken.chain}
                     </span>
                   </div>
                 </div>
@@ -670,18 +682,20 @@ export default function Home(): React.ReactElement {
                 <div className="flex items-center justify-between">
                   <input
                     type="text"
-                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-400 outline-none transition-all duration-200 group-hover:text-green-100"
+                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-400 outline-none transition-all duration-200 group-hover:text-green-100 mr-3"
                     placeholder="0.0"
                     value={toAmount}
                     readOnly
                     disabled={!authenticated}
                   />
-                  <div className="flex items-center space-x-2 ml-3 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500">
-                    <span className="text-white font-semibold">
+                  <div className="flex items-center space-x-2 bg-gray-600 rounded-lg px-3 py-2 border border-gray-500 flex-shrink-0">
+                    <img 
+                      src={toToken.symbol === "WMON" ? "/monad_logo.png" : "/arbsepolia_logo.png"} 
+                      alt={toToken.symbol}
+                      className="w-6 h-6 rounded-full"
+                    />
+                    <span className="text-white font-semibold whitespace-nowrap">
                       {toToken.symbol}
-                    </span>
-                    <span className="text-green-300 text-xs font-medium">
-                      {toToken.chain}
                     </span>
                   </div>
                 </div>
@@ -864,9 +878,14 @@ export default function Home(): React.ReactElement {
                         <div className="flex items-center space-x-8">
                           {/* From token */}
                           <div className="flex flex-col items-center">
-                            <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-lg transform hover:scale-105 transition-transform duration-200">
-                              {fromToken.symbol}
+                            <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-lg transform hover:scale-105 transition-transform duration-200 border-2 border-blue-400/30">
+                              <img 
+                                src={fromToken.symbol === "WETH" ? "/arbsepolia_logo.png" : "/monad_logo.png"} 
+                                alt={fromToken.symbol}
+                                className="w-8 h-8 rounded-full"
+                              />
                             </div>
+                            <span className="text-xs text-gray-400 mt-1">{fromToken.symbol}</span>
                           </div>
                           
                           {/* Flowing dots animation */}
@@ -874,7 +893,7 @@ export default function Home(): React.ReactElement {
                             {[...Array(3)].map((_, i) => (
                               <div
                                 key={i}
-                                className="w-2 h-2 bg-blue-500 rounded-full animate-flow"
+                                className="w-2 h-2 bg-blue-400 rounded-full animate-flow"
                                 style={{
                                   animationDelay: `${i * 0.3}s`,
                                 }}
@@ -884,9 +903,14 @@ export default function Home(): React.ReactElement {
                           
                           {/* To token */}
                           <div className="flex flex-col items-center">
-                            <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-lg transform hover:scale-105 transition-transform duration-200">
-                              {toToken.symbol}
+                            <div className="w-12 h-12 bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-lg transform hover:scale-105 transition-transform duration-200 border-2 border-emerald-400/30">
+                              <img 
+                                src={toToken.symbol === "WMON" ? "/monad_logo.png" : "/arbsepolia_logo.png"} 
+                                alt={toToken.symbol}
+                                className="w-8 h-8 rounded-full"
+                              />
                             </div>
+                            <span className="text-xs text-gray-400 mt-1">{toToken.symbol}</span>
                           </div>
                         </div>
                         
