@@ -188,13 +188,7 @@ export default function Home(): React.ReactElement {
     if (!authenticated || !connectedWallet || !chainId) return;
     
     // Parse chainId
-    let numericChainId: number;
-    // if (typeof chainId === 'string' && chainId.includes(':')) {
-    //   numericChainId = parseInt(chainId.split(':')[1]);
-    // } else {
-    //   numericChainId = typeof chainId === 'string' ? parseInt(chainId) : chainId;
-    // }
-    numericChainId = Number(chainId?.toString().split(':').pop());
+    const numericChainId: number = Number(chainId?.toString().split(':').pop());
     console.log("Line number 472:", numericChainId);
 
     // WETH = Arbitrum Sepolia (421614), WMON = Monad (10143)

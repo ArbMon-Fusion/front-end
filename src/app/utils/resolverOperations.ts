@@ -46,6 +46,7 @@ export class ResolverOperations {
   }
 
   // Phase 2: Deploy source escrow (mirrors test script lines 262-273)
+  /* eslint-disable @typescript-eslint/no-explicit-any */
   public deploySrc(
     chainId: number,
     order: any,
