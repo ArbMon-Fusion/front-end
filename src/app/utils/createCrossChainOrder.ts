@@ -54,14 +54,6 @@ export async function createCrossChainOrder(
   });
 
 
-  //   signer!,
-  //   userAddress,
-  //   makerAsset,
-  //   lopContract,
-  //   makingAmount,
-  //   swapDirection
-  // );
-  // Mirror exact test script order creation
   const order = CrossChainOrder.new(
     new Address(srcFactory),
     {

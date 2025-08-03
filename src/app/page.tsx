@@ -9,6 +9,14 @@ import { fetchBalances, formatBalance, getBalanceForToken, BalanceInfo } from ".
 import { checkAndRequestApproval, getLOPContract, getTokenAddress } from "./utils/tokenApproval";
 import { parseUnits } from "ethers";
 
+// DCA Agent imports
+import { AgentIcon } from "./agent/components/AgentIcon";
+import { ChatInterface } from "./agent/components/ChatInterface";
+import { HistoryDialog } from "./agent/components/HistoryDialog";
+import { DataManager } from "./agent/services/dataManager";
+import { GPTService } from "./agent/services/gptService";
+import { ChatMessage, DCAInvestment, SwapHistoryItem } from "./agent/types/agent.types";
+
 // Declare window.ethereum interface for TypeScript
 declare global {
   interface Window {
@@ -63,6 +71,22 @@ export default function Home(): React.ReactElement {
   const [networkError, setNetworkError] = useState<string>("");
   const [showExecutionModal, setShowExecutionModal] = useState<boolean>(false);
   const [swapInProgress, setSwapInProgress] = useState<boolean>(false);
+
+  // DCA Agent state
+  const [agentOpen, setAgentOpen] = useState<boolean>(false);
+  const [agentMessages, setAgentMessages] = useState<ChatMessage[]>([]);
+  const [agentProcessing, setAgentProcessing] = useState<boolean>(false);
+  const [agentNotification, setAgentNotification] = useState<boolean>(false);
+  const [showHistoryDialog, setShowHistoryDialog] = useState<boolean>(false);
+  const [userDCAData, setUserDCAData] = useState<{
+    activeInvestments: DCAInvestment[];
+    history: SwapHistoryItem[];
+    stats: any;
+  }>({
+    activeInvestments: [],
+    history: [],
+    stats: null
+  });
  
   const [steps, setSteps] = useState<
     Array<{
@@ -570,6 +594,201 @@ export default function Home(): React.ReactElement {
     }
   }, [fromToken.symbol, toToken.symbol, fromAmount]);
 
+  // DCA Agent Functions
+  const dataManager = DataManager.getInstance();
+  const gptService = GPTService.getInstance();
+
+  // Load user DCA data
+  useEffect(() => {
+    if (authenticated && address) {
+      loadUserDCAData();
+    }
+  }, [authenticated, address]);
+
+  const loadUserDCAData = async () => {
+    if (!address) return;
+
+    try {
+      await dataManager.loadData();
+      const userData = dataManager.getUserData(address);
+      const stats = dataManager.getUserStats(address);
+      
+      setUserDCAData({
+        activeInvestments: userData.activeInvestments,
+        history: userData.history,
+        stats
+      });
+    } catch (error) {
+      console.error('Error loading DCA data:', error);
+    }
+  };
+
+  const handleAgentMessage = async (message: string) => {
+    if (!address) return;
+
+    const userMessage: ChatMessage = {
+      id: Date.now().toString(),
+      type: 'user',
+      content: message,
+      timestamp: Date.now()
+    };
+
+    setAgentMessages(prev => [...prev, userMessage]);
+    setAgentProcessing(true);
+
+    try {
+      // Parse user intent with GPT
+      const intent = await gptService.parseUserIntent(message);
+      
+      // Generate response based on intent and current state
+      const hasActiveInvestment = userDCAData.activeInvestments.some(inv => inv.isActive);
+      const responseMessage = gptService.generateResponseMessage(intent, hasActiveInvestment);
+
+      const agentMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'agent',
+        content: responseMessage,
+        timestamp: Date.now(),
+        intent
+      };
+
+      setAgentMessages(prev => [...prev, agentMessage]);
+
+      // Handle different intents
+      if (intent.intent === 'start_dca' && intent.amount && intent.intervalMinutes) {
+        await handleStartDCA(intent.amount, intent.intervalMinutes);
+      } else if (intent.intent === 'stop_dca') {
+        await handleStopDCA();
+      } else if (intent.intent === 'view_history') {
+        setShowHistoryDialog(true);
+      }
+
+    } catch (error) {
+      console.error('Error processing agent message:', error);
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'agent',
+        content: 'Sorry, I encountered an error processing your request. Please try again.',
+        timestamp: Date.now()
+      };
+      setAgentMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setAgentProcessing(false);
+    }
+  };
+
+  const handleStartDCA = async (amount: string, intervalMinutes: number) => {
+    if (!address || !signer) return;
+
+    try {
+      // Check for existing active investment
+      const hasActive = userDCAData.activeInvestments.some(inv => inv.isActive);
+      if (hasActive) {
+        // Stop existing investment first
+        await handleStopDCA();
+      }
+
+      // Use the amount user requested
+      const dcaAmount = amount;
+
+      // Step 1: Get user to sign the order for 0.01 WETH → WMON
+      const signingMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'agent',
+        content: `🔐 Please sign the DCA order for ${dcaAmount} WETH → WMON. This signature will be stored and reused for automatic swaps.`,
+        timestamp: Date.now()
+      };
+      setAgentMessages(prev => [...prev, signingMessage]);
+
+      // Create the order that user will sign
+      console.log('📝 Creating DCA order for user to sign...');
+      const orderData = await createCrossChainOrder(address, dcaAmount, "WETH_TO_WMON");
+      const orderChainId = 421614; // Arbitrum Sepolia
+
+      // Get user to sign the order
+      console.log('✍️ Requesting user signature for DCA automation...');
+      const signatureData = await signCrossChainOrder(signer, orderData.order, orderChainId);
+      console.log('✅ User signed DCA order successfully!', signatureData);
+
+      // Create new DCA investment with stored signature
+      const newInvestment: DCAInvestment = {
+        id: Date.now().toString(),
+        amount: dcaAmount, // User's chosen amount
+        intervalMinutes: 1, // Temporarily 1 minute for testing
+        nextSwapTime: Date.now() + (1 * 60 * 1000), // Next swap in 1 minute
+        isActive: true,
+        createdAt: Date.now(),
+        totalInvested: "0",
+        totalReceived: "0",
+        swapCount: 0,
+        // Store the signed order data for automation
+        signedOrderData: {
+          order: orderData.order,
+          signature: signatureData.signature,
+          secret: orderData.secret,
+          orderHash: signatureData.orderHash,
+          chainId: orderChainId
+        }
+      };
+
+      await dataManager.addInvestment(address, newInvestment);
+      await loadUserDCAData();
+
+      const successMessage: ChatMessage = {
+        id: (Date.now() + 2).toString(),
+        type: 'agent',
+        content: `✅ DCA investment started! I'll automatically swap ${dcaAmount} WETH to WMON every 1 minute using your stored signature. (Testing mode - will be 5 minutes in production)`,
+        timestamp: Date.now()
+      };
+
+      setAgentMessages(prev => [...prev, successMessage]);
+      setAgentNotification(true);
+
+    } catch (error) {
+      console.error('Error starting DCA:', error);
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 2).toString(),
+        type: 'agent',
+        content: 'Failed to start DCA investment. Please make sure you signed the transaction and try again.',
+        timestamp: Date.now()
+      };
+      setAgentMessages(prev => [...prev, errorMessage]);
+    }
+  };
+
+  const handleStopDCA = async () => {
+    if (!address) return;
+
+    try {
+      const activeInvestments = userDCAData.activeInvestments.filter(inv => inv.isActive);
+      
+      for (const investment of activeInvestments) {
+        await dataManager.stopInvestment(address, investment.id);
+      }
+
+      await loadUserDCAData();
+
+      const successMessage: ChatMessage = {
+        id: (Date.now() + 2).toString(),
+        type: 'agent',
+        content: '⏹️ All DCA investments have been stopped.',
+        timestamp: Date.now()
+      };
+
+      setAgentMessages(prev => [...prev, successMessage]);
+
+    } catch (error) {
+      console.error('Error stopping DCA:', error);
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 2).toString(),
+        type: 'agent',
+        content: 'Failed to stop DCA investment. Please try again.',
+        timestamp: Date.now()
+      };
+      setAgentMessages(prev => [...prev, errorMessage]);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 text-white font-inter relative">
       <div className="max-w-md mx-auto px-4 pt-6">
@@ -992,6 +1211,44 @@ export default function Home(): React.ReactElement {
           </p>
         </div>
       </div>
+
+      {/* DCA Agent Components */}
+      <AgentIcon
+        onClick={() => setAgentOpen(true)}
+        hasNotification={agentNotification}
+        isProcessing={agentProcessing}
+      />
+
+      <ChatInterface
+        isOpen={agentOpen}
+        messages={agentMessages}
+        isProcessing={agentProcessing}
+        userAddress={address}
+        onClose={() => {
+          setAgentOpen(false);
+          setAgentNotification(false);
+        }}
+        onSendMessage={handleAgentMessage}
+        onViewHistory={() => setShowHistoryDialog(true)}
+      />
+
+      <HistoryDialog
+        isOpen={showHistoryDialog}
+        onClose={() => setShowHistoryDialog(false)}
+        history={userDCAData.history}
+        activeInvestments={userDCAData.activeInvestments}
+        userStats={userDCAData.stats || {
+          totalInvestments: 0,
+          activeInvestments: 0,
+          totalSwaps: 0,
+          successfulSwaps: 0,
+          failedSwaps: 0,
+          pendingSwaps: 0,
+          totalInvested: "0",
+          totalReceived: "0",
+          averageReturn: "0%"
+        }}
+      />
 
       <style jsx>{`
         @keyframes spin {
