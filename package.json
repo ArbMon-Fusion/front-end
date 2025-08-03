@@ -13,14 +13,15 @@
     "@privy-io/wagmi": "^0.2.7",
     "@tanstack/query-core": "^5.83.0",
     "@tanstack/react-query": "^5.83.0",
+    "ethers": "^6.0.0",
     "next": "15.4.5",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "viem": "^2.33.1",
-    "wagmi": "^2.16.0",
-    "ethers": "^6.0.0"
+    "wagmi": "^2.16.0"
   },
   "devDependencies": {
+    "@1inch/byte-utils": "3.1.0",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
@@ -30,8 +31,7 @@
     "eslint-config-next": "15.4.5",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "@1inch/byte-utils": "3.1.0",
-    "@1inch/cross-chain-sdk": "file:../Fusion_sdks/cross-chain-sdk"
+    "@nikhil0341/cross-chain-sdk": "0.1.15-rc.2"
   },
   "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

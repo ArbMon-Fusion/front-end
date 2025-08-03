@@ -6,7 +6,7 @@ import {
   TimeLocks,
   AuctionDetails,
   randBigInt
-} from "@1inch/cross-chain-sdk";
+} from "@nikhil0341/cross-chain-sdk";
 import { parseUnits, parseEther, randomBytes, Signer } from "ethers";
 import { uint8ArrayToHex, UINT_40_MAX } from "@1inch/byte-utils";
 import contractAddresses from "../../../deployedAddresses/addresses.json";

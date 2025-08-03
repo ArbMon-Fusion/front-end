@@ -16,7 +16,7 @@ import {
   HashLock,
   TimeLocks,
   EscrowFactory
-} from "@1inch/cross-chain-sdk";
+} from "@nikhil0341/cross-chain-sdk";
 import contractAddresses from "../../../deployedAddresses/addresses.json";
 import ResolverABI from "../../../Abi/Resolver.json";
 import EscrowFactoryABI from "../../../Abi/EscrowFactory.json";
@@ -26,11 +26,11 @@ const DEPLOYER_PRIVATE_KEY = process.env.NEXT_PUBLIC_DEPLOYER_PRIVATE_KEY!;
 // Chain configurations
 const chains = {
   arbitrum: {
-    rpc: "https://arb-sepolia.g.alchemy.com/v2/TRxeW47imEqxxdPubmvTuhcG334Udxb0",
+    rpc: process.env.NEXT_PUBLIC_ARB_RPC_URL!,
     chainId: 421614
   },
   monad: {
-    rpc: "https://monad-testnet.g.alchemy.com/v2/TRxeW47imEqxxdPubmvTuhcG334Udxb0",
+    rpc: process.env.NEXT_PUBLIC_MONAD_RPC_URL!,
     chainId: 10143
   }
 };
