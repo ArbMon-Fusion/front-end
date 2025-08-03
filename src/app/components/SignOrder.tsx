@@ -28,6 +28,7 @@ export default function SignOrderButton() {
       console.log(`🔄 Direction: ${swapDirection}`);
 
       const orderData = await createCrossChainOrder(address, swapAmount, swapDirection);
+      console.log("📄 Order created:", orderData);
       
       // Step 2: Sign the order (mirrors test script's signOrder call)
       const chainId = swapDirection === "WETH_TO_WMON" ? 421614 : 10143;
@@ -46,15 +47,15 @@ export default function SignOrderButton() {
         secret: orderData.secret
       });
 
-      // Store for next phases
-      (window as any).orderData = {
-        order: orderData.order,
-        signature: signatureData.signature,
-        secret: orderData.secret,
-        orderHash: signatureData.orderHash,
-        swapDirection: orderData.swapDirection,
-        chainId
-      };
+      // // Store for next phases
+      // (window as any).orderData = {
+      //   order: orderData.order,
+      //   signature: signatureData.signature,
+      //   secret: orderData.secret,
+      //   orderHash: signatureData.orderHash,
+      //   swapDirection: orderData.swapDirection,
+      //   chainId
+      // };
 
       alert(`✅ Order created! Order hash: ${signatureData.orderHash.slice(0, 10)}...`);
 
@@ -67,7 +68,8 @@ export default function SignOrderButton() {
   };
 
   const handlePhase2 = async () => {
-    const orderData = (window as any).orderData;
+    
+    const orderData = (window as any).orderData; // eslint-disable-line @typescript-eslint/no-explicit-any
     console.log("📋 Phase 2 data:", orderData);
     if (!orderData) {
       alert("Please complete Phase 1 first");
@@ -136,12 +138,13 @@ export default function SignOrderButton() {
         <label className="block text-sm font-medium">Swap Direction:</label>
         <select 
           value={swapDirection} 
-          onChange={(e) => setSwapDirection(e.target.value as any)}
+          onChange={(e) => setSwapDirection(e.target.value as "WETH_TO_WMON" | "WMON_TO_WETH")}
           className="w-full p-2 border rounded"
         >
           <option value="WETH_TO_WMON">WETH → WMON (1 WETH = 0.9 WMON)</option>
           <option value="WMON_TO_WETH">WMON → WETH (0.9 WMON = 1 WETH)</option>
         </select>
+        
       </div>
 
       <div className="space-y-2">
@@ -174,7 +177,7 @@ export default function SignOrderButton() {
         onClick={handleCreateOrder}
         disabled={isLoading || !signer || !address}
       >
-        {isLoading ? "Creating Order..." : "Phase 1: Create & Sign Order"}
+{isLoading ? "🔄 Creating Order..." : "Phase 1: Create & Sign Order"}
       </button>
 
       <button
@@ -186,7 +189,7 @@ export default function SignOrderButton() {
         onClick={handlePhase2}
         disabled={isPhase2Loading}
       >
-        {isPhase2Loading ? "Deploying Escrow..." : "Phase 2: Fill Order & Deploy Source Escrow"}
+{isPhase2Loading ? "🚀 Deploying Escrow..." : "Phase 2: Fill Order & Deploy Source Escrow"}
       </button>
 
       <button

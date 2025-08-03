@@ -26,7 +26,7 @@
   version "0.1.15-rc.0"
   dependencies:
     "@1inch/byte-utils" "2.6.0"
-    "@1inch/fusion-sdk" "file:../../../../usr/local/share/.cache/yarn/v6/npm-@1inch-cross-chain-sdk-0.1.15-rc.0-6f538767-a024-4082-a2d0-196a68cf730e-1754082820962/node_modules/@1inch/fusion-sdk"
+    "@1inch/fusion-sdk" "file:../../../../.cache/yarn/v6/npm-@1inch-cross-chain-sdk-0.1.15-rc.0-f41ea58b-e915-4f1e-aaaa-561816378b0a-1754125405593/node_modules/@1inch/Fusion_Sdk"
     "@openzeppelin/merkle-tree" "1.0.7"
     axios "1.8.2"
     ecies-25519 "1.3.1"
@@ -34,11 +34,11 @@
     tslib "2.6.3"
     ws "^8.18.0"
 
-"@1inch/fusion-sdk@file:../Fusion_sdks/fusion-sdk":
+"@1inch/fusion-sdk@file:../Fusion_sdks/Fusion_Sdk":
   version "2.1.11-rc.2"
   dependencies:
     "@1inch/byte-utils" "2.3.0"
-    "@1inch/limit-order-sdk" "file:../../../../usr/local/share/.cache/yarn/v6/npm-@1inch-fusion-sdk-2.1.11-rc.2-bc04fa75-881c-40cf-8a5b-ced198f9b0f0-1754082820985/node_modules/@1inch/limit-order-sdk"
+    "@1inch/limit-order-sdk" "file:../../../../.cache/yarn/v6/npm-@1inch-fusion-sdk-2.1.11-rc.2-b0815f56-b07d-4dd1-bcd9-b5af06eddc43-1754125405598/node_modules/@1inch/limit-order-sdk"
     ethers "^6.13.1"
     tslib "^2.6.3"
     ws "^8.17.1"

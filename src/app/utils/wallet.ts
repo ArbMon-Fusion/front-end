@@ -23,7 +23,7 @@ export const useUnifiedSigner = () => {
         "getSigner" in embeddedWallet &&
         typeof embeddedWallet.getSigner === "function"
       ) {
-        const privySigner = await (embeddedWallet as any).getSigner();
+        const privySigner = await (embeddedWallet as { getSigner: () => Promise<Signer> }).getSigner();
         setSigner(privySigner);
         setAddress(embeddedWallet.address);
         return;
@@ -31,20 +31,17 @@ export const useUnifiedSigner = () => {
 
       // 2. Fallback to Wagmi signer (e.g., MetaMask)
       if (walletClient && wagmiAddress) {
-        // Convert Wagmi wallet client to ethers signer
-        const { account, chain, transport } = walletClient;
-        const network = {
-          chainId: chain.id,
-          name: chain.name,
-          ensAddress: chain.contracts?.ensRegistry?.address,
-        };
+        const { account, transport } = walletClient;
 
-        const provider = new BrowserProvider(transport, network);
-        console.log("Using Wagmi Signer:", provider);
+        // ✅ Automatically uses correct network (like 421614 for Arbitrum Sepolia)
+        const provider = new BrowserProvider(transport);
         const wagmiSigner = new JsonRpcSigner(provider, account.address);
-        console.log("Wagmi Signer Address:", wagmiAddress);
+
+        const signerAddress = await wagmiSigner.getAddress();
+        console.log("Wagmi Signer Address:", signerAddress);
+
         setSigner(wagmiSigner);
-        setAddress(wagmiAddress);
+        setAddress(signerAddress);
       }
     };
 

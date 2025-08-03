@@ -38,8 +38,26 @@ import Layout from './components/Layout';
 import './globals.css';
 
 export const metadata = {
-  title: 'My Privy dApp',
-  description: 'A Web3 application with Privy authentication',
+  title: 'Swap Nova - Cross-Chain Token Swaps',
+  description: 'Seamless cross-chain token swaps between Ethereum and Monad ecosystems. Gasless, secure, and instant atomic swaps with 1inch Fusion protocol.',
+  keywords: [
+    'cross-chain swap',
+    'token swap',
+    'ethereum',
+    'monad',
+    'arbitrum',
+    'defi',
+    'blockchain',
+    'cryptocurrency',
+    'atomic swap',
+    'gasless',
+    '1inch fusion',
+    'web3',
+    'decentralized exchange'
+  ],
+  authors: [{ name: 'Swap Nova Team' }],
+  creator: 'Swap Nova',
+  publisher: 'Swap Nova',
 };
 
 export default function RootLayout({

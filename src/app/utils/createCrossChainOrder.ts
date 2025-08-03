@@ -99,6 +99,8 @@ export async function createCrossChainOrder(
     }
   );
 
+  console.log("Line number 102 createCrossChainOrder.ts:",order);
+
   return {
     order,
     secret,
@@ -112,16 +114,18 @@ export async function createCrossChainOrder(
 }
 
 // Sign order function that mirrors test script's EIP-712 signing approach
-export async function signCrossChainOrder(signer: Signer, order: any, chainId: number) {
+export async function signCrossChainOrder(signer: Signer, order: any, chainId: number) { // eslint-disable-line @typescript-eslint/no-explicit-any
   // Mirror test script: const signature = await srcChainUser.signOrder(srcChainId, order)
   // Uses EIP-712 signing like wallet.ts line 85-93
   
   const typedData = order.getTypedData(chainId);
+  console.log("📋 Signing order with EIP-712:", typedData);
   const signature = await signer.signTypedData(
     typedData.domain,
     { Order: typedData.types[typedData.primaryType] },
     typedData.message
   );
+  console.log("✍️ Order signed successfully!",signature);
   
   const orderHash = order.getOrderHash(chainId);
   

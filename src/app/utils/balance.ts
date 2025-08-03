@@ -1,4 +1,4 @@
-import { createPublicClient, http, formatEther, parseEther } from 'viem';
+import { createPublicClient, http, formatEther } from 'viem';
 import { arbitrumSepolia, monadTestnet } from 'viem/chains';
 import { erc20Abi } from 'viem';
 
@@ -28,10 +28,10 @@ export interface BalanceInfo {
 
 // Helper function to get ERC-20 token balance
 const getTokenBalance = async (
-  client: any,
+  client: ReturnType<typeof createPublicClient>,
   tokenAddress: string,
   userAddress: string,
-  decimals: number = 18
+  // decimals: number = 18
 ): Promise<{ balance: bigint; symbol: string }> => {
   try {
     const [balance, symbol] = await Promise.all([
@@ -69,10 +69,10 @@ export const fetchBalances = async (address: string): Promise<{
 
   try {
     // Fetch native ETH balance on Arbitrum Sepolia
-    const arbitrumNativeBalance = await arbitrumSepoliaClient.getBalance({
-      address: address as `0x${string}`,
-    });
-    console.log("Arbitrum native ETH balance:", arbitrumNativeBalance.toString());
+    // const arbitrumNativeBalance = await arbitrumSepoliaClient.getBalance({
+    //   address: address as `0x${string}`,
+    // });
+    // console.log("Arbitrum native ETH balance:", arbitrumNativeBalance.toString());
 
     // Fetch WETH balance on Arbitrum Sepolia
     let wethBalance = { balance: BigInt(0), symbol: 'WETH' };
@@ -82,16 +82,16 @@ export const fetchBalances = async (address: string): Promise<{
         WETH_SEPOLIA_ADDRESS,
         address
       );
-      console.log("Arbitrum WETH balance:", wethBalance.balance.toString());
+      // console.log("Arbitrum WETH balance:", wethBalance.balance.toString());
     } catch (error) {
       console.warn("Failed to fetch WETH balance, using 0:", error);
     }
 
     // Fetch native MON balance on Monad testnet
-    const monadNativeBalance = await monadTestnetClient.getBalance({
-      address: address as `0x${string}`,
-    });
-    console.log("Monad native MON balance:", monadNativeBalance.toString());
+    // const monadNativeBalance = await monadTestnetClient.getBalance({
+    //   address: address as `0x${string}`,
+    // });
+    // console.log("Monad native MON balance:", monadNativeBalance.toString());
 
     // Fetch WMON balance on Monad testnet (if contract exists)
     let wmonBalance = { balance: BigInt(0), symbol: 'WMON' };
@@ -101,7 +101,7 @@ export const fetchBalances = async (address: string): Promise<{
           WMON_TESTNET_ADDRESS,
           address
         );
-        console.log("Monad WMON balance:", wmonBalance.balance.toString());
+        // console.log("Monad WMON balance:", wmonBalance.balance.toString());
       } catch (error) {
         console.warn("Failed to fetch WMON balance, using 0:", error);
       }

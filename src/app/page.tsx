@@ -1,17 +1,28 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useWallets, usePrivy } from "@privy-io/react-auth";
-import SignOrderButton from "./components/SignOrder";
+import { useUnifiedSigner } from "./utils/wallet";
+import { createCrossChainOrder, signCrossChainOrder } from "./utils/createCrossChainOrder";
+import { executePhase2, executePhase3, executePhase4 } from "./utils/resolverOperations";
 import { fetchBalances, formatBalance, getBalanceForToken, BalanceInfo } from "./utils/balance";
+import { checkApproval, approveToken, getTokenAndSpenderForDirection } from "./utils/approval";
+
+// Declare window.ethereum interface for TypeScript
+declare global {
+  interface Window {
+    ethereum?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  }
+}
 
 export default function Home(): React.ReactElement {
-  const { wallets, ready } = useWallets();
+  const { wallets } = useWallets();
   const { authenticated } = usePrivy();
+  const { signer, address } = useUnifiedSigner();
   const [fromAmount, setFromAmount] = useState<string>("");
   const [toAmount, setToAmount] = useState<string>("");
   const [isSwapping, setIsSwapping] = useState<boolean>(false);
-  const [currentRate, setCurrentRate] = useState<number>(99.87); // 1 ETH = 99.87 MON
+  const [currentRate, setCurrentRate] = useState<number>(0.9); // 1 WETH = 0.9 WMON (fixed rate)
   const [balances, setBalances] = useState<{
     arbitrumSepolia: BalanceInfo;
     monadTestnet: BalanceInfo;
@@ -40,7 +51,32 @@ export default function Home(): React.ReactElement {
   });
   const [showStatusPanel, setShowStatusPanel] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
+  const [encouragementMessage, setEncouragementMessage] = useState<string>("");
+  const [currentChain, setCurrentChain] = useState<string>("");
+  const [targetChain, setTargetChain] = useState<string>("");
+  const [swapPaused, setSwapPaused] = useState<boolean>(false);
   const [isSwapButtonHovered, setIsSwapButtonHovered] = useState<boolean>(false);
+  const [swapSuccess, setSwapSuccess] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string>("");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [networkError, setNetworkError] = useState<string>("");
+  const [showExecutionModal, setShowExecutionModal] = useState<boolean>(false);
+  const [swapInProgress, setSwapInProgress] = useState<boolean>(false);
+  const [approvalStatus, setApprovalStatus] = useState<{
+    isApproved: boolean;
+    isChecking: boolean;
+    isApproving: boolean;
+    message: string;
+    lastChecked: number;
+    approvedTokens: Set<string>; // Track which tokens are approved
+  }>({
+    isApproved: false,
+    isChecking: false,
+    isApproving: false,
+    message: "",
+    lastChecked: 0,
+    approvedTokens: new Set()
+  });
   const [steps, setSteps] = useState<
     Array<{
       id: string;
@@ -51,45 +87,174 @@ export default function Home(): React.ReactElement {
   >([
     {
       id: "step1",
-      text: "Escrow contract locked tokens",
-      status: "completed",
+      text: "Creating and signing cross-chain order",
+      status: "waiting",
       txLink: "",
     },
     {
       id: "step2",
-      text: "Resolver executing on Monad...",
+      text: "Deploying source escrow on Arbitrum",
       status: "waiting",
       txLink: "",
     },
     {
       id: "step3",
-      text: "Tokens released to your wallet",
+      text: "Deploying destination escrow on Monad",
       status: "waiting",
       txLink: "",
     },
     {
       id: "step4",
-      text: "Resolver claims escrowed tokens",
+      text: "Completing withdrawals and finalizing swap",
       status: "waiting",
       txLink: "",
     },
   ]);
-  const statusPanelRef = useRef<HTMLDivElement | null>(null);
 
   // Get connected wallet details
   const connectedWallet = wallets.find((w) => w.walletClientType !== "privy");
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy");
-  const address = connectedWallet?.address || embeddedWallet?.address;
+  const walletAddress = connectedWallet?.address || embeddedWallet?.address;
   const chainId = connectedWallet?.chainId;
+  console.log("Line number 113:",chainId);
 
   // Define accepted chain IDs
-  const acceptedChains = [421614, 10143]; // Arbitrum Sepolia ID: 421614, Monad ID: 10143 (replace with actual Monad ID)
+  const acceptedChains = [421614, 10143]; // Arbitrum Sepolia ID: 421614, Monad ID: 10143
   const isValidChain =
     typeof chainId === "number" && acceptedChains.includes(chainId);
 
+  // Function to switch chain automatically
+  const switchChainAutomatically = async (targetChainId: number) => {
+    if (!connectedWallet || !window.ethereum) return false;
+    
+    try {
+      const chainIdHex = `0x${targetChainId.toString(16)}`;
+      
+      // First try to switch to the chain
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: chainIdHex }],
+      });
+      
+      console.log(`✅ Successfully switched to chain ${targetChainId}`);
+      return true;
+    } catch (switchError) {
+      // If the chain hasn't been added to the wallet, add it
+      if ((switchError as { code?: number }).code === 4902) {
+        try {
+          const chainData = getChainData(targetChainId);
+          if (chainData) {
+            await window.ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [chainData],
+            });
+            console.log(`✅ Successfully added and switched to chain ${targetChainId}`);
+            return true;
+          }
+        } catch (addError) {
+          console.error("Failed to add chain:", addError);
+          return false;
+        }
+      } else {
+        console.error("Failed to switch chain:", switchError);
+        return false;
+      }
+    }
+    return false;
+  };
+
+  // Get chain configuration data
+  const getChainData = (chainId: number) => {
+    const chainIdHex = `0x${chainId.toString(16)}`;
+    
+    if (chainId === 421614) {
+      return {
+        chainId: chainIdHex,
+        chainName: 'Arbitrum Sepolia',
+        nativeCurrency: {
+          name: 'Ethereum',
+          symbol: 'ETH',
+          decimals: 18,
+        },
+        rpcUrls: ['https://sepolia-rollup.arbitrum.io/rpc'],
+        blockExplorerUrls: ['https://sepolia.arbiscan.io/'],
+      };
+    } else if (chainId === 10143) {
+      return {
+        chainId: chainIdHex,
+        chainName: 'Monad Testnet',
+        nativeCurrency: {
+          name: 'Monad',
+          symbol: 'MON',
+          decimals: 18,
+        },
+        rpcUrls: ['https://testnet1.monad.xyz'],
+        blockExplorerUrls: ['https://monad-testnet.socialscan.io/'],
+      };
+    }
+    return null;
+  };
+
+  // Network validation and auto-switching effect
+  useEffect(() => {
+    if (authenticated && connectedWallet && chainId) {
+      // Handle different chainId formats: "eip155:421614", "421614", or 421614
+      let numericChainId: number;
+      
+      if (typeof chainId === 'string') {
+        if (chainId.includes(':')) {
+          // Handle "eip155:421614" format
+          numericChainId = parseInt(chainId.split(':')[1]);
+        } else {
+          // Handle "421614" format
+          numericChainId = parseInt(chainId);
+        }
+      } else {
+        // Handle number format
+        numericChainId = chainId;
+      }
+      
+      console.log("Raw chainId:", chainId);
+      console.log("Parsed chainId:", numericChainId);
+      
+      // Determine which chain is needed for the current swap direction
+      const requiredChainId = fromToken.symbol === "WETH" ? 421614 : 10143; // WETH needs Arbitrum, WMON needs Monad
+      console.log("Required chain ID:", requiredChainId);
+
+      
+      if (numericChainId !== requiredChainId) {
+        const currentChainName = numericChainId === 421614 ? "Arbitrum Sepolia" :
+                                numericChainId === 10143 ? "Monad Testnet" :
+                                `Chain ${numericChainId}`;
+        console.log("Current chain name:", currentChainName);
+        
+        const requiredChainName = requiredChainId === 421614 ? "Arbitrum Sepolia" : "Monad Testnet";
+        
+        setCurrentChain(currentChainName);
+        setTargetChain(requiredChainName);
+        
+        // Automatically switch to the required chain
+        console.log(`🔄 Attempting to switch from ${currentChainName} to ${requiredChainName}...`);
+        // setNetworkError(`Switching to ${requiredChainName}...`);
+        
+        switchChainAutomatically(requiredChainId).then((success) => {
+          if (!success) {
+            setNetworkError(`Please switch to ${requiredChainName}. Currently on: ${currentChainName}`);
+          } else {
+            setNetworkError("");
+          }
+        });
+      } else {
+        setNetworkError("");
+        setCurrentChain(numericChainId === 421614 ? "Arbitrum Sepolia" : "Monad Testnet");
+        setTargetChain(requiredChainId === 421614 ? "Arbitrum Sepolia" : "Monad Testnet");
+      }
+    }
+  }, [authenticated, chainId, connectedWallet, fromToken.symbol]);
+
   // Fetch balances from both networks
   const fetchAndUpdateBalances = async () => {
-    if (!authenticated || !address) {
+    if (!authenticated || !walletAddress) {
       setBalances({
         arbitrumSepolia: {
           balance: '0',
@@ -110,7 +275,7 @@ export default function Home(): React.ReactElement {
     }
 
     try {
-      const fetchedBalances = await fetchBalances(address);
+      const fetchedBalances = await fetchBalances(walletAddress);
       setBalances(fetchedBalances);
     } catch (error) {
       console.error('Error fetching balances:', error);
@@ -132,18 +297,18 @@ export default function Home(): React.ReactElement {
   // Update balances based on wallet connection
   useEffect(() => {
     fetchAndUpdateBalances();
-  }, [authenticated, address]);
+  }, [authenticated, walletAddress]);
 
   // Refresh balances every 30 seconds
   useEffect(() => {
-    if (!authenticated || !address) return;
+    if (!authenticated || !walletAddress) return;
 
     const interval = setInterval(() => {
       fetchAndUpdateBalances();
     }, 30000); // 30 seconds
 
     return () => clearInterval(interval);
-  }, [authenticated, address]);
+  }, [authenticated, walletAddress]);
 
   const getFromBalance = () => {
     const balanceInfo = getBalanceForToken(balances, fromToken.symbol);
@@ -159,7 +324,9 @@ export default function Home(): React.ReactElement {
     if (!authenticated) return;
     const amount = parseFloat(e.target.value) || 0;
     setFromAmount(e.target.value);
-    setToAmount((amount * currentRate).toFixed(4));
+    // Use more precise calculation with proper rounding
+    const calculatedAmount = amount * currentRate;
+    setToAmount(calculatedAmount > 0 ? calculatedAmount.toFixed(6) : "0");
   };
 
   const swapTokens = () => {
@@ -167,101 +334,409 @@ export default function Home(): React.ReactElement {
     const tempToken = fromToken;
     setFromToken(toToken);
     setToToken(tempToken);
-    setCurrentRate(fromToken.symbol === "WETH" ? 99.87 : 0.01002);
+    
+    // Fixed rate calculation - maintain consistent rate
+    // When swapping from WETH to WMON: rate = 0.9 (1 WETH = 0.9 WMON)
+    // When swapping from WMON to WETH: rate = 1/0.9 ≈ 1.1111 (1 WMON = 1.1111 WETH)
+    const newRate = toToken.symbol === "WETH" ? (1 / 0.9) : 0.9;
+    setCurrentRate(newRate);
+    
     if (fromAmount) {
-      setToAmount(
-        (
-          parseFloat(fromAmount) *
-          (fromToken.symbol === "WETH" ? 99.87 : 0.01002)
-        ).toFixed(4)
-      );
+      const amount = parseFloat(fromAmount);
+      const calculatedAmount = amount * newRate;
+      setToAmount(calculatedAmount > 0 ? calculatedAmount.toFixed(6) : "0");
     }
   };
 
-  const generateTxHash = (): string => {
-    const chars = "0123456789abcdef";
-    let result = "0x";
-    for (let i = 0; i < 8; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
+  // Helper function to get user-friendly error messages
+  const getUserFriendlyError = (error: unknown): string => {
+    console.error("Technical error:", error); // Log technical details to console
+    
+    const errorMessage = (error as Error)?.message?.toLowerCase() || error?.toString?.()?.toLowerCase() || "";
+    
+    if (errorMessage.includes("user rejected") || errorMessage.includes("denied")) {
+      return "Transaction was cancelled. No worries, you can try again anytime!";
     }
-    return result + "...c3d4";
+    if (errorMessage.includes("insufficient")) {
+      return "Insufficient balance. Please check your wallet balance and try again.";
+    }
+    if (errorMessage.includes("network") || errorMessage.includes("connection")) {
+      return "Network connection issue. Please check your internet and try again.";
+    }
+    if (errorMessage.includes("gas")) {
+      return "Gas estimation failed. Please try again in a moment.";
+    }
+    if (errorMessage.includes("nonce")) {
+      return "Transaction conflict detected. Please try again.";
+    }
+    
+    return "Something went wrong. Please try again or contact support if the issue persists.";
   };
 
-  const generateTxLink = (stepIndex: number): string => {
-    const explorers = [
-      "https://sepolia.arbiscan.io/tx/",
-      "https://monadscan.com/tx/",
-      "https://monadscan.com/tx/",
-      "https://sepolia.arbiscan.io/tx/",
-    ];
-    return (
-      explorers[stepIndex] +
-      generateTxHash().replace("...c3d4", "c3d4abcd1234567890")
-    );
+  // Helper function to get explorer URL
+  const getExplorerUrl = (txHash: string, chainId: number): string => {
+    if (chainId === 421614) {
+      return `https://sepolia.arbiscan.io/tx/${txHash}`;
+    } else if (chainId === 10143) {
+      return `https://monad-testnet.socialscan.io/tx/${txHash}`;
+    }
+    return `https://etherscan.io/tx/${txHash}`;
   };
 
-  const simulateSwapProcess = async () => {
-    if (!authenticated) return;
-    setIsSwapping(true);
-    setShowStatusPanel(true);
+  const executeSwap = async () => {
+    if (!authenticated || isSwapping || !fromAmount || !signer) {
+      setErrorMessage("Please connect your wallet and enter an amount to continue");
+      return;
+    }
+    
+    setErrorMessage("");
+    setNetworkError("");
+    setSwapSuccess(false);
 
-    const stepUpdates = [
-      { progress: 25, text: "Escrow contract locked tokens" },
-      { progress: 50, text: "Resolver executing on Monad..." },
-      { progress: 75, text: "Tokens released to your wallet" },
-      { progress: 100, text: "Resolver claims escrowed tokens" },
-    ];
+    const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
+    const { tokenAddress, spenderAddress } = getTokenAndSpenderForDirection(swapDirection);
+    const approvalKey = `${tokenAddress}-${spenderAddress}`;
 
-    for (let i = 0; i < stepUpdates.length; i++) {
-      const newSteps = [...steps];
-      newSteps[i].status = "pending";
-      newSteps[i].text = stepUpdates[i].text;
-      setSteps(newSteps);
-      setProgress(stepUpdates[i].progress);
-      await new Promise((resolve) =>
-        setTimeout(resolve, 2000 + Math.random() * 2000)
-      );
-      newSteps[i].status = "completed";
-      newSteps[i].txLink = i < stepUpdates.length - 1 ? generateTxLink(i) : "";
-      setSteps([...newSteps]);
+    // Check if we already know this token is approved
+    if (approvalStatus.approvedTokens.has(approvalKey)) {
+      console.log("✅ Token already approved, proceeding with swap");
+      executeRealSwap();
+      return;
     }
 
-    setTimeout(() => {
-      setSteps((prevSteps) => [
-        ...prevSteps,
-        {
-          id: "success",
-          text: "🎉 Cross-Chain Swap Completed!",
-          status: "completed",
-          txLink: "",
-        },
-      ]);
-      setIsSwapping(false);
-      // Refresh balances after swap completion
-      fetchAndUpdateBalances();
-    }, 1000);
+    // Check approval status if not already checked recently (within 5 minutes)
+    const timeSinceLastCheck = Date.now() - approvalStatus.lastChecked;
+    if (timeSinceLastCheck > 5 * 60 * 1000) { // 5 minutes
+      console.log("🔄 Checking approval status...");
+      await checkApprovalStatus();
+    }
+
+    // If not approved, request approval
+    if (!approvalStatus.isApproved) {
+      console.log("🔐 Requesting approval...");
+      await requestApproval();
+    } else {
+      // If already approved, proceed with swap
+      console.log("✅ Token approved, proceeding with swap");
+      executeRealSwap();
+    }
   };
 
-  const executeSwap = () => {
-    if (!authenticated || isSwapping || !fromAmount) return;
-    simulateSwapProcess();
-  };
+  // Check approval status for current swap direction
+  const checkApprovalStatus = async () => {
+    if (!signer || !fromAmount) return;
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!authenticated || isSwapping) return;
-      const variation = (Math.random() - 0.5) * 0.02;
-      setCurrentRate((prev) => {
-        const newRate = prev * (1 + variation);
-        if (fromAmount) {
-          setToAmount((parseFloat(fromAmount) * newRate).toFixed(4));
-        }
-        return newRate;
+    const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
+    const { tokenAddress, spenderAddress } = getTokenAndSpenderForDirection(swapDirection);
+
+    setApprovalStatus(prev => ({ 
+      ...prev, 
+      isChecking: true, 
+      message: "Checking approval status..." 
+    }));
+
+    try {
+      const approval = await checkApproval(signer, tokenAddress, spenderAddress, fromAmount);
+      
+      // Create a unique key for this token-spender combination
+      const approvalKey = `${tokenAddress}-${spenderAddress}`;
+      const newApprovedTokens = new Set(approvalStatus.approvedTokens);
+      
+      if (approval.isApproved) {
+        newApprovedTokens.add(approvalKey);
+      }
+      
+      setApprovalStatus({
+        isApproved: approval.isApproved,
+        isChecking: false,
+        isApproving: false,
+        message: approval.isApproved ? "Approved" : "Approval required",
+        lastChecked: Date.now(),
+        approvedTokens: newApprovedTokens
       });
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [authenticated, isSwapping, fromAmount]);
+    } catch (error) {
+      console.error("Error checking approval:", error);
+      setApprovalStatus(prev => ({
+        ...prev,
+        isApproved: false,
+        isChecking: false,
+        isApproving: false,
+        message: "Unable to check approval status"
+      }));
+    }
+  };
 
+  // Request approval for unlimited amount
+  const requestApproval = async () => {
+    if (!signer || !fromAmount) return;
+
+    const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
+    const { tokenAddress, spenderAddress } = getTokenAndSpenderForDirection(swapDirection);
+    console.log("Requesting approval for:", tokenAddress, spenderAddress);
+
+    setApprovalStatus(prev => ({ 
+      ...prev, 
+      isApproving: true, 
+      message: "Requesting approval..." 
+    }));
+
+    try {
+      const result = await approveToken(signer, tokenAddress, spenderAddress, "unlimited");
+      
+      if (result.success) {
+        // Add to approved tokens set
+        const approvalKey = `${tokenAddress}-${spenderAddress}`;
+        const newApprovedTokens = new Set(approvalStatus.approvedTokens);
+        newApprovedTokens.add(approvalKey);
+        
+        setApprovalStatus({
+          isApproved: true,
+          isChecking: false,
+          isApproving: false,
+          message: "Approved successfully!",
+          lastChecked: Date.now(),
+          approvedTokens: newApprovedTokens
+        });
+        
+        // Proceed with swap after approval
+        setTimeout(() => {
+          executeRealSwap();
+        }, 1000);
+      } else {
+        setApprovalStatus(prev => ({
+          ...prev,
+          isApproved: false,
+          isChecking: false,
+          isApproving: false,
+          message: result.error || "Approval failed"
+        }));
+      }
+    } catch (error) {
+      console.error("Error requesting approval:", error);
+      const friendlyMsg = getUserFriendlyError(error);
+      setApprovalStatus(prev => ({
+        ...prev,
+        isApproved: false,
+        isChecking: false,
+        isApproving: false,
+        message: friendlyMsg.includes("cancelled") ? "Approval cancelled" : "Approval failed"
+      }));
+    }
+  };
+
+  // Check if current token is already approved
+  const isCurrentTokenApproved = () => {
+    if (!fromAmount || !signer) return false;
+    
+    const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
+    const { tokenAddress, spenderAddress } = getTokenAndSpenderForDirection(swapDirection);
+    const approvalKey = `${tokenAddress}-${spenderAddress}`;
+    
+    return approvalStatus.approvedTokens.has(approvalKey);
+  };
+
+  // Get current approval status for display
+  const getCurrentApprovalStatus = () => {
+    if (!fromAmount || !signer) {
+      return {
+        isApproved: false,
+        message: "",
+        needsCheck: false
+      };
+    }
+
+    const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
+    const { tokenAddress, spenderAddress } = getTokenAndSpenderForDirection(swapDirection);
+    const approvalKey = `${tokenAddress}-${spenderAddress}`;
+    
+    const isApproved = approvalStatus.approvedTokens.has(approvalKey);
+    const timeSinceLastCheck = Date.now() - approvalStatus.lastChecked;
+    const needsCheck = timeSinceLastCheck > 5 * 60 * 1000; // 5 minutes
+    
+    return {
+      isApproved,
+      message: isApproved ? "Token approved" : needsCheck ? "Check approval status" : "Approval required",
+      needsCheck
+    };
+  };
+
+  // Real cross-chain swap execution
+  const executeRealSwap = async () => {
+    if (!authenticated || !signer || !address || !fromAmount) {
+      setErrorMessage("Please connect your wallet and enter an amount to continue");
+      return;
+    }
+
+    setIsSwapping(true);
+    setShowExecutionModal(true);
+    setSwapInProgress(true);
+    setSwapPaused(false);
+    setErrorMessage("");
+    setNetworkError("");
+    setSwapSuccess(false);
+    setIsLoading(true);
+
+    try {
+      // Determine swap direction
+      const swapDirection = fromToken.symbol === "WETH" ? "WETH_TO_WMON" : "WMON_TO_WETH";
+      
+      // Update step 1
+      setSteps(prev => prev.map((step, index) => 
+        index === 0 ? { ...step, status: "pending", text: "Creating and signing cross-chain order..." } : step
+      ));
+      setProgress(25);
+
+      // Phase 1: Create and sign order
+      console.log("🚀 Starting Phase 1: Cross-chain order creation...");
+      const orderData = await createCrossChainOrder(address, fromAmount, swapDirection);
+      const orderChainId = swapDirection === "WETH_TO_WMON" ? 421614 : 10143;
+      console.log("Line number 503:", orderChainId);
+      const signatureData = await signCrossChainOrder(signer, orderData.order, orderChainId);
+      console.log("✍️ Order signed successfully! line number 505", signatureData);
+
+      // Store for next phases
+      (window as any).orderData = { // eslint-disable-line @typescript-eslint/no-explicit-any
+        order: orderData.order,
+        signature: signatureData.signature,
+        secret: orderData.secret,
+        orderHash: signatureData.orderHash,
+        swapDirection: orderData.swapDirection,
+        chainId: orderChainId
+      };
+
+      // Update step 1 as completed
+      setSteps(prev => prev.map((step, index) => 
+        index === 0 ? { 
+          ...step, 
+          status: "completed", 
+          text: "Order created and signed", 
+          txLink: signatureData.orderHash ? getExplorerUrl(signatureData.orderHash, orderChainId) : ""
+        } : step
+      ));
+      setProgress(50);
+
+      // Phase 2: Deploy source escrow
+      setSteps(prev => prev.map((step, index) => 
+        index === 1 ? { 
+          ...step, 
+          status: "pending", 
+          text: `Deploying source escrow on ${fromToken.symbol === "WETH" ? "Arbitrum" : "Monad"}...` 
+        } : step
+      ));
+      
+      console.log("🚀 Starting Phase 2: Source escrow deployment");
+      const phase2Result = await executePhase2((window as any).orderData); // eslint-disable-line @typescript-eslint/no-explicit-any
+      
+      setSteps(prev => prev.map((step, index) => 
+        index === 1 ? { 
+          ...step, 
+          status: "completed", 
+          text: "Source escrow deployed", 
+          txLink: phase2Result.txHash ? getExplorerUrl(phase2Result.txHash, fromToken.symbol === "WETH" ? 421614 : 10143) : ""
+        } : step
+      ));
+      setProgress(75);
+
+      // Phase 3: Deploy destination escrow
+      setSteps(prev => prev.map((step, index) => 
+        index === 2 ? { 
+          ...step, 
+          status: "pending", 
+          text: `Deploying destination escrow on ${toToken.symbol === "WMON" ? "Monad" : "Arbitrum"}...` 
+        } : step
+      ));
+      
+      console.log("🚀 Starting Phase 3: Destination escrow deployment");
+      const phase3Result = await executePhase3();
+      
+      setSteps(prev => prev.map((step, index) => 
+        index === 2 ? { 
+          ...step, 
+          status: "completed", 
+          text: "Destination escrow deployed", 
+          txLink: phase3Result.txHash ? getExplorerUrl(phase3Result.txHash, toToken.symbol === "WMON" ? 10143 : 421614) : ""
+        } : step
+      ));
+      setProgress(90);
+
+      // Phase 4: Complete withdrawals
+      setSteps(prev => prev.map((step, index) => 
+        index === 3 ? { ...step, status: "pending", text: "Completing withdrawals..." } : step
+      ));
+      
+      console.log("🚀 Starting Phase 4: Final withdrawals");
+      const phase4Result = await executePhase4();
+      
+      setSteps(prev => prev.map((step, index) => 
+        index === 3 ? { 
+          ...step, 
+          status: "completed", 
+          text: "Withdrawals completed", 
+          txLink: phase4Result.userWithdrawTx ? getExplorerUrl(phase4Result.userWithdrawTx, 10143) : ""
+        } : step
+      ));
+      setProgress(100);
+
+      // Add success step with celebration animation
+      setTimeout(() => {
+        setSteps(prev => [
+          ...prev,
+          {
+            id: "success",
+            text: "🎉 Cross-Chain Swap Completed Successfully!",
+            status: "completed",
+            txLink: "",
+          },
+        ]);
+        setIsSwapping(false);
+        setIsLoading(false);
+        setSwapSuccess(true);
+        setSwapInProgress(false);
+        
+        // Refresh balances after swap completion
+        fetchAndUpdateBalances();
+      }, 1000);
+
+      console.log("🎉 Cross-chain swap completed successfully!");
+
+    } catch (error) {
+      console.error("❌ Swap failed:", error);
+      
+      // Get user-friendly error message
+      let userMessage = "Transaction failed. ";
+      const errorMsg = (error as Error)?.message?.toLowerCase() || "";
+      
+      if (errorMsg.includes("insufficient") && errorMsg.includes("balance")) {
+        userMessage = "Insufficient funds. Please check your wallet balance and try again.";
+      } else if (errorMsg.includes("insufficient") && errorMsg.includes("allowance")) {
+        userMessage = "Token approval needed. Please try again to auto-approve.";
+      } else if (errorMsg.includes("user rejected") || errorMsg.includes("cancelled")) {
+        userMessage = "Transaction was cancelled.";
+      } else if (errorMsg.includes("network") || errorMsg.includes("connection")) {
+        userMessage = "Network error. Please check your connection and try again.";
+      } else {
+        userMessage = "Transaction failed. Please try again.";
+      }
+      
+      setErrorMessage(userMessage);
+      setIsSwapping(false);
+      setIsLoading(false);
+      setSwapInProgress(false);
+      setSwapSuccess(false);
+      setShowExecutionModal(false); // Close the modal on error
+      
+      // Reset steps and progress on error
+      setSteps(prev => prev.map(step => ({ ...step, status: "waiting" as const })));
+      setProgress(0);
+      
+      // Clear error message after 8 seconds
+      setTimeout(() => {
+        setErrorMessage("");
+      }, 8000);
+    }
+  };
+
+  // Remove the old rate variation effect since we're using fixed rates now
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!authenticated) return;
@@ -277,17 +752,46 @@ export default function Home(): React.ReactElement {
   }, [authenticated, isSwapping, fromAmount]);
 
   useEffect(() => {
-    if (showStatusPanel && statusPanelRef.current) {
-      statusPanelRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-      });
+    if (showExecutionModal && showExecutionModal) {
+      // Scroll to the modal content
+      const modalContent = document.querySelector('.modal-content');
+      if (modalContent) {
+        modalContent.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+        });
+      }
     }
-  }, [showStatusPanel]);
+  }, [showExecutionModal]);
+
+  // Auto-check approval when token or amount changes (but not too frequently)
+  useEffect(() => {
+    if (authenticated && signer && fromAmount && parseFloat(fromAmount) > 0) {
+      const currentStatus = getCurrentApprovalStatus();
+      
+      // Only check if we don't already know it's approved and haven't checked recently
+      if (!currentStatus.isApproved && currentStatus.needsCheck) {
+        console.log("🔄 Auto-checking approval status...");
+        checkApprovalStatus();
+      }
+    }
+  }, [authenticated, signer, fromAmount, fromToken.symbol]);
+
+  // Recalculate toAmount when tokens change
+  useEffect(() => {
+    if (fromAmount) {
+      const amount = parseFloat(fromAmount);
+      // Ensure rate is correct based on current token direction
+      const correctRate = fromToken.symbol === "WETH" ? 0.9 : (1 / 0.9);
+      setCurrentRate(correctRate);
+      const calculatedAmount = amount * correctRate;
+      setToAmount(calculatedAmount > 0 ? calculatedAmount.toFixed(6) : "0");
+    }
+  }, [fromToken.symbol, toToken.symbol, fromAmount]);
 
   return (
     <div className="min-h-screen bg-gray-900 text-white font-inter relative">
-      <div className="max-w-md mx-auto px-4 pt-8">
+      <div className="max-w-md mx-auto px-4 pt-6">
         {!authenticated && (
           <div className="bg-gray-800 rounded-xl p-4 mb-6 text-center border border-gray-700 shadow-sm">
             <p className="text-yellow-400 mb-2 font-medium">
@@ -298,27 +802,29 @@ export default function Home(): React.ReactElement {
         {authenticated && address && (
           <div className="bg-gray-800 rounded-xl p-4 mb-6 text-center border border-gray-700 shadow-sm">
             <p className="text-green-400 mb-2 font-medium">
-              Cross-Chain Swap WETH ↔ WMON
+              Ready for Cross-Chain Swap
             </p>
           </div>
         )}
+
         {authenticated && (
           <>
             <div className="bg-gray-800 rounded-2xl p-6 shadow-sm border border-gray-700">
               <div className="flex justify-between items-center mb-6">
                 <span className="bg-blue-600 text-white px-3 py-1.5 rounded-full text-xs font-semibold">
-                  ⚡ Gasless
+                  ⚡ Cross-Chain
                 </span>
-                <div className="text-xs text-gray-400">
-                  Rate: 1 {fromToken.symbol} = {currentRate.toFixed(4)} {toToken.symbol}
+                <div className="text-xs text-gray-400 flex items-center gap-2">
+                  <span>Rate: 1 {fromToken.symbol} = {currentRate.toFixed(4)} {toToken.symbol}</span>
+                  {isLoading && <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>}
                 </div>
               </div>
 
-              <div className="bg-gray-700 rounded-xl p-4 mb-4 border border-gray-600 transition-all duration-200 hover:bg-gray-650">
+              <div className="bg-gray-700 rounded-xl p-4 mb-4 border border-gray-600 transition-all duration-200 hover:bg-gray-650 hover:border-gray-500 group">
                 <div className="flex justify-between items-center mb-2 text-sm text-gray-300">
                   <span>From</span>
                   <span
-                    className="cursor-pointer hover:text-white transition-colors duration-200 font-medium"
+                    className="cursor-pointer hover:text-white transition-colors duration-200 font-medium hover:scale-105"
                     onClick={() => setFromAmount(getFromBalance())}
                   >
                     Balance: {getFromBalance()}
@@ -327,7 +833,7 @@ export default function Home(): React.ReactElement {
                 <div className="flex items-center justify-between">
                   <input
                     type="text"
-                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-400 outline-none"
+                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-400 outline-none transition-all duration-200 group-hover:text-blue-100"
                     placeholder="0.0"
                     value={fromAmount}
                     onChange={handleAmountInput}
@@ -346,30 +852,35 @@ export default function Home(): React.ReactElement {
 
               <div className="flex justify-center mb-4 relative">
                 <button
-                  className={`relative bg-gray-700 rounded-full w-12 h-12 flex items-center justify-center transition-all duration-200 border border-gray-600 hover:bg-gray-600 hover:scale-105 ${isSwapButtonHovered ? 'shadow-md' : 'shadow-sm'
-                    }`}
+                  className={`relative bg-gray-700 rounded-full w-12 h-12 flex items-center justify-center transition-all duration-300 border border-gray-600 hover:bg-gray-600 hover:scale-110 hover:rotate-180 hover:shadow-lg group ${
+                    isSwapButtonHovered ? 'shadow-md' : 'shadow-sm'
+                  }`}
                   onClick={swapTokens}
                   disabled={!authenticated}
                   onMouseEnter={() => setIsSwapButtonHovered(true)}
                   onMouseLeave={() => setIsSwapButtonHovered(false)}
                 >
                   <svg
-                    className={`w-5 h-5 text-gray-300 transition-transform duration-200 ${isSwapButtonHovered ? 'rotate-180' : ''
-                      }`}
+                    className={`w-5 h-5 text-gray-300 transition-all duration-300 group-hover:text-white group-hover:scale-110 ${
+                      isSwapButtonHovered ? 'rotate-180' : ''
+                    }`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
                   </svg>
+                  
+                  {/* Hover effect ring */}
+                  <div className="absolute inset-0 rounded-full border-2 border-blue-500/0 group-hover:border-blue-500/50 transition-all duration-300 group-hover:scale-125"></div>
                 </button>
               </div>
 
-              <div className="bg-gray-700 rounded-xl p-4 mb-4 border border-gray-600 transition-all duration-200 hover:bg-gray-650">
+              <div className="bg-gray-700 rounded-xl p-4 mb-4 border border-gray-600 transition-all duration-200 hover:bg-gray-650 hover:border-gray-500 group">
                 <div className="flex justify-between items-center mb-2 text-sm text-gray-300">
                   <span>To</span>
                   <span
-                    className="cursor-pointer hover:text-white transition-colors duration-200 font-medium"
+                    className="cursor-pointer hover:text-white transition-colors duration-200 font-medium hover:scale-105"
                     onClick={() => setFromAmount(getToBalance())}
                   >
                     Balance: {getToBalance()}
@@ -378,7 +889,7 @@ export default function Home(): React.ReactElement {
                 <div className="flex items-center justify-between">
                   <input
                     type="text"
-                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-400 outline-none"
+                    className="bg-transparent text-2xl font-semibold w-full text-white placeholder-gray-400 outline-none transition-all duration-200 group-hover:text-green-100"
                     placeholder="0.0"
                     value={toAmount}
                     readOnly
@@ -395,128 +906,311 @@ export default function Home(): React.ReactElement {
                 </div>
               </div>
 
-              <div className="bg-blue-900/30 rounded-xl p-4 mb-6 border border-blue-700/50">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-sm font-medium text-blue-200">Best Route via Fusion+</span>
-                  <span className="bg-blue-600 text-white px-2 py-1 rounded-full text-xs font-semibold">
-                    Best Rate
-                  </span>
+              {/* Swap Status Indicator */}
+              {swapInProgress && !swapSuccess && (
+                <div className="bg-blue-900/30 border border-blue-600/50 rounded-xl p-4 mb-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-4 h-4 bg-blue-400 rounded-full animate-pulse"></div>
+                      <div>
+                        <span className="text-blue-300 font-medium">Swap in Progress</span>
+                        <p className="text-xs text-blue-200">Your cross-chain swap is running in the background</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowExecutionModal(true)}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+                    >
+                      View Progress
+                    </button>
+                  </div>
                 </div>
+              )}
+
+              {/* Swap Success Indicator */}
+              {swapSuccess && (
+                <div className="bg-green-900/30 border border-green-600/50 rounded-xl p-4 mb-4 animate-fadeIn">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <svg className="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M9 16.17L4.83 12L3.41 13.41L9 19L21 7L19.59 5.59L9 16.17Z" />
+                      </svg>
+                      <div>
+                        <span className="text-green-300 font-medium">Swap Completed!</span>
+                        <p className="text-xs text-green-200">Your cross-chain swap was successful</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowExecutionModal(true)}
+                      className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+                    >
+                      View Details
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Network Error Message */}
+              {networkError && (
+                <div className="bg-orange-900/30 border border-orange-600/50 rounded-xl p-4 mb-4 animate-shake">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-5 h-5 text-orange-400" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-orange-300 font-medium">{networkError}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Encouragement Message */}
+              {encouragementMessage && (
+                <div className="bg-green-900/30 border border-green-600/50 rounded-xl p-4 mb-4 animate-fadeIn">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-5 h-5 text-green-400 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span className="text-green-300 font-medium">{encouragementMessage}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Error Message */}
+              {errorMessage && (
+                <div className="bg-red-900/30 border border-red-600/50 rounded-xl p-4 mb-4 animate-shake">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-red-300 font-medium">{errorMessage}</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-blue-900/30 rounded-xl p-4 mb-6 border border-blue-700/50">
                 <div className="flex justify-between text-sm">
                   <div className="text-center">
-                    <span className="text-white font-semibold">~30s</span>
+                    <span className="text-white font-semibold">{isLoading ? '⏳ Processing...' : '~2 min'}</span>
                     <span className="text-gray-400 block text-xs">Est. Time</span>
                   </div>
                   <div className="text-center">
-                    <span className="text-white font-semibold">$0.00</span>
-                    <span className="text-gray-400 block text-xs">Gas Fee</span>
+                    <span className="text-white font-semibold">Gasless</span>
+                    <span className="text-gray-400 block text-xs">User Fee</span>
                   </div>
                 </div>
               </div>
 
-              <button
-                className={`w-full bg-blue-600 text-white py-4 rounded-xl text-lg font-semibold transition-all duration-200 shadow-sm hover:shadow-md ${isSwapping || !fromAmount
-                    ? "opacity-50 cursor-not-allowed"
-                    : "hover:bg-blue-700 hover:scale-[1.02]"
-                  }`}
-                onClick={executeSwap}
-                disabled={!authenticated || isSwapping || !fromAmount}
-              >
-                {isSwapping
-                  ? "⏳ Swapping..."
-                  : fromAmount
-                    ? "🚀 Submit order"
-                    : "Enter Amount"}
-              </button>
-              <SignOrderButton />
-
-            </div>
-
-            <div
-              ref={statusPanelRef}
-              className={`bg-gray-800 rounded-2xl p-6 mt-6 border border-gray-700 shadow-sm transition-all duration-300 ${showStatusPanel ? "block opacity-100 translate-y-0" : "hidden opacity-0 translate-y-2"
-                }`}
-            >
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center">
-                  {steps.some((step) => step.text.includes("Completed")) ? (
-                    <svg
-                      className="w-5 h-5 text-white"
-                      fill="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M9 16.17L4.83 12L3.41 13.41L9 19L21 7L19.59 5.59L9 16.17Z" />
-                    </svg>
-                  ) : (
-                    <svg
-                      className="w-5 h-5 text-white animate-pulse"
-                      fill="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M12 2L2 7V10C2 16 6 20.5 12 22C18 20.5 22 16 22 10V7L12 2Z" />
-                    </svg>
+              {/* Approval Status Indicator - Only show when token is not approved */}
+              {authenticated && fromAmount && parseFloat(fromAmount) > 0 && !getCurrentApprovalStatus().isApproved && (
+                <div className={`mb-4 p-3 rounded-lg border ${
+                  approvalStatus.isApproving || approvalStatus.isChecking
+                    ? "bg-yellow-900/30 border-yellow-600/50"
+                    : "bg-blue-900/30 border-blue-600/50"
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className={`text-sm font-medium ${
+                      approvalStatus.isApproving || approvalStatus.isChecking
+                        ? "text-yellow-300"
+                        : "text-blue-300"
+                    }`}>
+                      {approvalStatus.isApproving 
+                        ? "⏳ Requesting Approval..." 
+                        : approvalStatus.isChecking
+                        ? "⏳ Checking Approval..."
+                        : "🔐 Approval Required"}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {getCurrentApprovalStatus().message}
+                    </span>
+                  </div>
+                  {!approvalStatus.isApproving && !approvalStatus.isChecking && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      Approve {fromToken.symbol} for unlimited cross-chain swaps
+                    </p>
                   )}
                 </div>
-                <h3 className="font-semibold text-xl text-white">
-                  {steps.some((step) => step.text.includes("Completed"))
-                    ? "🎉 Cross-Chain Swap Completed!"
-                    : "Cross-Chain Swap in Progress"}
-                </h3>
-              </div>
+              )}
 
-              <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden mb-6">
-                <div
-                  className="h-full bg-blue-600 transition-all duration-500 rounded-full"
-                  style={{ width: `${progress}%` }}
-                ></div>
-              </div>
+              <button
+                className={`w-full py-4 rounded-xl text-lg font-semibold transition-all duration-300 shadow-sm hover:shadow-md relative overflow-hidden ${
+                  !authenticated || !fromAmount || networkError
+                    ? "bg-gray-600 text-gray-300 cursor-not-allowed"
+                    : swapInProgress && !swapSuccess
+                    ? "bg-blue-600 hover:bg-blue-700 text-white hover:scale-[1.02] hover:shadow-lg"
+                    : approvalStatus.isApproving
+                    ? "bg-yellow-600 text-white cursor-not-allowed animate-pulse"
+                    : getCurrentApprovalStatus().isApproved
+                    ? "bg-green-600 hover:bg-green-700 text-white hover:scale-[1.02] hover:shadow-lg"
+                    : "bg-blue-600 hover:bg-blue-700 text-white hover:scale-[1.02] hover:shadow-lg"
+                }`}
+                onClick={swapInProgress && !swapSuccess ? () => setShowExecutionModal(true) : executeSwap}
+                disabled={!authenticated || isSwapping || !fromAmount || approvalStatus.isApproving || !!networkError}
+              >
+                {isLoading && (
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer"></div>
+                )}
+                <span className="relative z-10">
+                  {!authenticated
+                    ? "Connect Wallet"
+                    : networkError
+                    ? "Switch Network"
+                    : !fromAmount
+                    ? "Enter Amount"
+                    : isSwapping
+                    ? "⏳ Processing Cross-Chain Swap..."
+                    : swapInProgress && !swapSuccess
+                    ? "🔄 View Progress"
+                    : approvalStatus.isApproving
+                    ? "⏳ Requesting Approval..."
+                    : approvalStatus.isChecking
+                    ? "⏳ Checking Approval..."
+                    : getCurrentApprovalStatus().isApproved
+                    ? "🚀 Create Order"
+                    : "🔐 Approve & Execute Swap"}
+                </span>
+              </button>
 
-              <div className="flex flex-col gap-4">
-                {steps.map((step, index) => (
-                  <div key={step.id} className="flex items-center gap-4 py-3 animate-fadeIn" style={{ animationDelay: `${index * 100}ms` }}>
-                    <div
-                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-200 ${step.status === "completed"
-                          ? "bg-blue-600 text-white"
-                          : step.status === "pending"
-                            ? "bg-yellow-500 text-white animate-spin"
-                            : "bg-gray-600 text-gray-300"
-                        }`}
-                    >
-                      {step.status === "completed"
-                        ? "✓"
-                        : step.status === "pending"
-                          ? "⟳"
-                          : index + 1}
+            </div>
+
+            {/* Execution Modal */}
+            {showExecutionModal && (
+              <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                <div className="bg-gray-800 rounded-2xl p-6 max-w-md w-full border border-gray-700 shadow-xl">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center">
+                        {swapSuccess ? (
+                          <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M9 16.17L4.83 12L3.41 13.41L9 19L21 7L19.59 5.59L9 16.17Z" />
+                          </svg>
+                        ) : (
+                          <svg className="w-5 h-5 text-white animate-pulse" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 2L2 7V10C2 16 6 20.5 12 22C18 20.5 22 16 22 10V7L12 2Z" />
+                          </svg>
+                        )}
+                      </div>
+                      <h3 className="font-semibold text-xl text-white">
+                        {swapSuccess ? "🎉 Swap Completed!" : "Cross-Chain Swap in Progress"}
+                      </h3>
                     </div>
-                    <span
-                      className={`flex-1 text-sm transition-all duration-200 ${step.status === "completed"
-                          ? "text-white font-medium"
-                          : step.status === "pending"
-                            ? "text-white font-semibold"
-                            : "text-gray-400"
-                        }`}
+                    <button
+                      onClick={() => setShowExecutionModal(false)}
+                      className="text-gray-400 hover:text-white transition-colors duration-200"
                     >
-                      {step.text}
-                    </span>
-                    {step.txLink && (
-                      <a
-                        href={step.txLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-300 text-xs border border-blue-600 px-3 py-1.5 rounded-lg hover:text-blue-200 hover:border-blue-500 hover:bg-blue-600/20 transition-all duration-200"
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Enhanced Swap Animation */}
+                  {!swapSuccess && (
+                    <div className="flex justify-center mb-6">
+                      <div className="relative">
+                        {/* Token swap animation */}
+                        <div className="flex items-center space-x-8">
+                          {/* From token */}
+                          <div className="flex flex-col items-center">
+                            <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-lg transform hover:scale-105 transition-transform duration-200">
+                              {fromToken.symbol}
+                            </div>
+                          </div>
+                          
+                          {/* Flowing dots animation */}
+                          <div className="flex items-center space-x-1">
+                            {[...Array(3)].map((_, i) => (
+                              <div
+                                key={i}
+                                className="w-2 h-2 bg-blue-500 rounded-full animate-flow"
+                                style={{
+                                  animationDelay: `${i * 0.3}s`,
+                                }}
+                              />
+                            ))}
+                          </div>
+                          
+                          {/* To token */}
+                          <div className="flex flex-col items-center">
+                            <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-lg transform hover:scale-105 transition-transform duration-200">
+                              {toToken.symbol}
+                            </div>
+                          </div>
+                        </div>
+                        
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden mb-6">
+                    <div
+                      className={`h-full bg-blue-600 transition-all duration-500 rounded-full ${isLoading ? 'animate-pulse' : ''}`}
+                      style={{ width: `${progress}%` }}
+                    ></div>
+                  </div>
+
+                  <div className="flex flex-col gap-4 max-h-64 overflow-y-auto custom-scrollbar">
+                    {steps.map((step, index) => (
+                      <div key={step.id} className="flex items-center gap-4 py-3 animate-fadeIn" style={{ animationDelay: `${index * 100}ms` }}>
+                        <div
+                          className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-300 ${
+                            step.status === "completed"
+                              ? "bg-blue-600 text-white"
+                              : step.status === "pending"
+                              ? "bg-yellow-500 text-white animate-spin"
+                              : "bg-gray-600 text-gray-300"
+                          }`}
+                        >
+                          {step.status === "completed"
+                            ? "✓"
+                            : step.status === "pending"
+                            ? "⟳"
+                            : index + 1}
+                        </div>
+                        <span
+                          className={`flex-1 text-sm transition-all duration-200 ${
+                            step.status === "completed"
+                              ? "text-white font-medium"
+                              : step.status === "pending"
+                              ? "text-white font-semibold"
+                              : "text-gray-400"
+                          }`}
+                        >
+                          {step.text}
+                        </span>
+                        {step.txLink && step.status === "completed" && (
+                          <a
+                            href={step.txLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-300 text-xs border border-blue-600 px-3 py-1.5 rounded-lg hover:text-blue-200 hover:border-blue-500 hover:bg-blue-600/20 transition-all duration-200"
+                          >
+                            View
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-3 mt-6">
+                    {swapSuccess ? (
+                      <button
+                        onClick={() => setShowExecutionModal(false)}
+                        className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-semibold transition-all duration-200"
                       >
-                        {step.txLink
-                          ? (step.txLink.split("/").pop() ?? "").substring(
-                            0,
-                            10
-                          ) + "..."
-                          : ""}
-                      </a>
+                        Close
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setShowExecutionModal(false)}
+                        className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-3 rounded-xl font-semibold transition-all duration-200"
+                      >
+                        Minimize
+                      </button>
                     )}
                   </div>
-                ))}
+                </div>
               </div>
-            </div>
+            )}
+
           </>
         )}
       </div>
@@ -566,6 +1260,62 @@ export default function Home(): React.ReactElement {
           }
         }
         
+        @keyframes shimmer {
+          0% {
+            transform: translateX(-100%);
+          }
+          100% {
+            transform: translateX(100%);
+          }
+        }
+        
+        @keyframes shake {
+          0%, 100% {
+            transform: translateX(0);
+          }
+          10%, 30%, 50%, 70%, 90% {
+            transform: translateX(-2px);
+          }
+          20%, 40%, 60%, 80% {
+            transform: translateX(2px);
+          }
+        }
+        
+        @keyframes glow {
+          0%, 100% {
+            box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
+          }
+          50% {
+            box-shadow: 0 0 30px rgba(34, 197, 94, 0.6);
+          }
+        }
+        
+        @keyframes bounce {
+          0%, 20%, 53%, 80%, 100% {
+            transform: translate3d(0,0,0);
+          }
+          40%, 43% {
+            transform: translate3d(0,-10px,0);
+          }
+          70% {
+            transform: translate3d(0,-5px,0);
+          }
+          90% {
+            transform: translate3d(0,-2px,0);
+          }
+        }
+        
+        @keyframes flow {
+          0%, 100% { 
+            opacity: 0.3; 
+            transform: translateX(-4px) scale(0.8); 
+          }
+          50% { 
+            opacity: 1; 
+            transform: translateX(4px) scale(1.2); 
+          }
+        }
+        
         .animate-spin {
           animation: spin 1s linear infinite;
         }
@@ -574,8 +1324,48 @@ export default function Home(): React.ReactElement {
           animation: fadeIn 0.5s ease-out forwards;
         }
         
+        .animate-shimmer {
+          animation: shimmer 2s ease-in-out infinite;
+        }
+        
+        .animate-shake {
+          animation: shake 0.5s ease-in-out;
+        }
+        
+        .animate-glow {
+          animation: glow 2s ease-in-out infinite;
+        }
+        
+        .animate-bounce {
+          animation: bounce 1s infinite;
+        }
+        
+        .animate-flow {
+          animation: flow 1.5s ease-in-out infinite;
+        }
+        
         .font-inter {
           font-family: "Inter", sans-serif;
+        }
+
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #1f2937;
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+          border-radius: 4px;
+          border: 1px solid #1f2937;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: linear-gradient(180deg, #60a5fa, #3b82f6);
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:active {
+          background: linear-gradient(180deg, #1d4ed8, #1e40af);
         }
       `}</style>
     </div>
